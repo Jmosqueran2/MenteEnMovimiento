@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prueba de visión · Mente en Movimiento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --noche: #081C15; --bosque: #1B4322; --verde: #038666; --menta: #DDEFE8;
+    --hielo: #EBF2FA; --amarillo: #FBB02D; --naranja: #E8913A; --rojo: #D64545;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Atkinson Hyperlegible", system-ui, sans-serif; background: var(--hielo);
+         color: var(--noche); display: grid; grid-template-columns: 340px 1fr; min-height: 100vh; }
+  aside { background: var(--noche); color: #fff; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+  aside h1 { font-size: 24px; margin: 0; }
+  video { width: 100%; border-radius: 16px; transform: scaleX(-1); background: #000; aspect-ratio: 4/3; }
+  label { font-size: 15px; color: #D8E3DE; }
+  input { width: 100%; padding: 10px; border-radius: 10px; border: 0; font: inherit; font-size: 14px; }
+  .fila { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; font-weight: 700; font-size: 16px; padding: 10px 18px; border-radius: 999px;
+           border: 2px solid var(--verde); background: var(--verde); color: #fff; cursor: pointer; }
+  button.sec { background: transparent; color: #fff; border-color: #D8E3DE; }
+  button[aria-pressed="true"] { background: var(--amarillo); border-color: var(--amarillo); color: var(--noche); }
+  pre { background: var(--bosque); color: #D8E3DE; padding: 12px; border-radius: 12px; font-size: 12px;
+        overflow: auto; flex: 1; margin: 0; max-height: 40vh; }
+  main { position: relative; padding: 32px; }
+  main h2 { margin: 0 0 4px; font-size: 32px; }
+  main p { margin: 0; font-size: 20px; }
+  .metricas { display: flex; gap: 12px; margin: 16px 0; flex-wrap: wrap; }
+  .metricas span { background: #fff; border-radius: 12px; padding: 8px 14px; font-weight: 700; }
+  .alerta { background: #FFF4E0; border: 2px solid var(--naranja); }
+  #zona { position: absolute; inset: 180px 32px 32px 32px; }
+  .objetivo { position: absolute; width: 28%; height: 34%; background: #fff; border-radius: 24px;
+              display: grid; place-items: center; font-size: 28px; font-weight: 700; border: 4px solid transparent;
+              transition: border-color .15s; }
+  .objetivo.encima { border-color: var(--amarillo); }
+  .objetivo.elegido { background: var(--menta); border-color: var(--verde); }
+  #o0 { left: 0; top: 0; } #o1 { right: 0; top: 0; } #o2 { left: 0; bottom: 0; } #o3 { right: 0; bottom: 0; }
+  #cursor { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; pointer-events: none;
+            display: none; z-index: 2; }
+  #cursor circle.fondo { fill: rgba(251,176,45,.25); stroke: var(--amarillo); stroke-width: 4; }
+  #cursor circle.anillo { fill: none; stroke: var(--verde); stroke-width: 6; stroke-linecap: round;
+                          transform: rotate(-90deg); transform-origin: 50% 50%; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Prueba del microservicio de visión</h1>
+  <video id="video" autoplay muted playsinline></video>
+  <label for="token">Token JWT (si el servicio lo exige)</label>
+  <input id="token" placeholder="opcional en desarrollo">
+  <div class="fila">
+    <button id="conectar">Conectar cámara</button>
+    <button id="calibrar" class="sec" disabled>Calibrar</button>
+  </div>
+  <div class="fila">
+    <button class="sec modo" data-modo="seleccion" aria-pressed="true">Selección</button>
+    <button class="sec modo" data-modo="coordinacion" aria-pressed="false">Coordinación</button>
+  </div>
+  <pre id="estado">Sin conexión.</pre>
+</aside>
+<main>
+  <h2>Mueve la mano hacia un cuadro</h2>
+  <p>Déjala quieta 1,5 segundos para elegirlo. Las imágenes se analizan al instante y se descartan.</p>
+  <div class="metricas" id="metricas"></div>
+  <div id="zona">
+    <div class="objetivo" id="o0">Cuchara</div>
+    <div class="objetivo" id="o1">Zapato</div>
+    <div class="objetivo" id="o2">Llave</div>
+    <div class="objetivo" id="o3">Pelota</div>
+    <svg id="cursor" viewBox="0 0 56 56">
+      <circle class="fondo" cx="28" cy="28" r="18"/>
+      <circle class="anillo" cx="28" cy="28" r="25" pathLength="100" stroke-dasharray="0 100"/>
+    </svg>
+  </div>
+</main>
+<script>
+const PERMANENCIA_MS = 1500;
+const $ = (id) => document.getElementById(id);
+const video = $("video"), lienzo = document.createElement("canvas");
+lienzo.width = 320; lienzo.height = 240;
+let ws = null, enviadoEn = 0, latencias = [], ultimoSegundo = performance.now(), cuadros = 0, fps = 0;
+let encima = null, encimaDesde = 0;
+
+$("conectar").onclick = async () => {
+  try {
+    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+  } catch (e) {
+    $("estado").textContent = "No se pudo usar la cámara: " + e.message;
+    return;
+  }
+  const protocolo = location.protocol === "https:" ? "wss" : "ws";
+  const token = $("token").value.trim();
+  ws = new WebSocket(`${protocolo}://${location.host}/ws/vision${token ? "?token=" + encodeURIComponent(token) : ""}`);
+  ws.onopen = () => { $("calibrar").disabled = false; enviarFrame(); };
+  ws.onclose = (e) => { $("estado").textContent = `Conexión cerrada (código ${e.code}).`; ws = null; };
+  ws.onmessage = (e) => {
+    const datos = JSON.parse(e.data);
+    if (datos.tipo === "estado") {
+      latencias.push(performance.now() - enviadoEn);
+      if (latencias.length > 20) latencias.shift();
+      cuadros++;
+      mostrar(datos);
+      enviarFrame();  // un frame en vuelo a la vez
+    } else {
+      $("estado").textContent = JSON.stringify(datos, null, 2);
+    }
+  };
+  // Si se desconecta la cámara, el track termina: esto alimenta la pantalla de error 10.
+  video.srcObject.getVideoTracks()[0].onended = () => $("estado").textContent = "La cámara se desconectó.";
+};
+
+$("calibrar").onclick = () => ws && ws.send(JSON.stringify({ accion: "calibrar" }));
+document.querySelectorAll(".modo").forEach((boton) => boton.onclick = () => {
+  document.querySelectorAll(".modo").forEach((b) => b.setAttribute("aria-pressed", b === boton));
+  ws && ws.send(JSON.stringify({ accion: "config", modo: boton.dataset.modo }));
+});
+
+function enviarFrame() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || video.readyState < 2) {
+    return setTimeout(enviarFrame, 100);
+  }
+  lienzo.getContext("2d").drawImage(video, 0, 0, lienzo.width, lienzo.height);
+  lienzo.toBlob((blob) => { enviadoEn = performance.now(); ws.send(blob); }, "image/jpeg", 0.7);
+}
+
+function mostrar(datos) {
+  const ahora = performance.now();
+  if (ahora - ultimoSegundo >= 1000) { fps = cuadros; cuadros = 0; ultimoSegundo = ahora; }
+  const latencia = Math.round(latencias.reduce((a, b) => a + b, 0) / latencias.length);
+  const p = datos.postura || {};
+  $("metricas").innerHTML = [
+    `${fps} fps`, `Ida y vuelta: ${latencia} ms`, `Servidor: ${datos.ms} ms`,
+    `Mano: ${datos.mano ? datos.mano.gesto : "—"}`, `Luz: ${datos.luz.estado}`,
+    `Calibración: ${datos.calibracion.estado} ${Math.round(datos.calibracion.progreso * 100)}%`,
+    ...datos.alertas.map((a) => `<b>⚠ ${a}</b>`),
+  ].map((t) => `<span class="${t.startsWith("<b>") ? "alerta" : ""}">${t}</span>`).join("");
+  $("estado").textContent = JSON.stringify({ postura: p, mano: datos.mano, cursor: datos.cursor }, null, 2);
+  moverCursor(datos.cursor, ahora);
+}
+
+function moverCursor(cursor, ahora) {
+  const svg = $("cursor"), anillo = svg.querySelector(".anillo"), zona = $("zona").getBoundingClientRect();
+  if (!cursor) { svg.style.display = "none"; encima = null; return; }
+  svg.style.display = "block";
+  const x = cursor.x * zona.width, y = cursor.y * zona.height;
+  svg.style.left = x + "px"; svg.style.top = y + "px";
+
+  const objetivo = [...document.querySelectorAll(".objetivo")].find((o) => {
+    const r = o.getBoundingClientRect();
+    return zona.left + x >= r.left && zona.left + x <= r.right && zona.top + y >= r.top && zona.top + y <= r.bottom;
+  });
+  document.querySelectorAll(".objetivo").forEach((o) => o.classList.toggle("encima", o === objetivo));
+  if (objetivo !== encima) { encima = objetivo; encimaDesde = ahora; }
+  const avance = objetivo ? Math.min((ahora - encimaDesde) / PERMANENCIA_MS, 1) : 0;
+  anillo.setAttribute("stroke-dasharray", `${avance * 100} 100`);
+  if (objetivo && avance >= 1) {
+    document.querySelectorAll(".objetivo").forEach((o) => o.classList.remove("elegido"));
+    objetivo.classList.add("elegido");
+    encimaDesde = ahora + 600;  // pausa breve antes de poder volver a elegir
+  }
+}
+</script>
+</body>
+</html>

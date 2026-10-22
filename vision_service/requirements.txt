@@ -1,0 +1,11 @@
+# PyTorch solo CPU: mucho más liviano y AWS Academy no tiene instancias con GPU.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1
+torchvision==0.29.1
+ultralytics==8.4.175
+mediapipe==1.1.0
+opencv-python-headless==5.0.0.93
+numpy==2.5.3
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+PyJWT==2.15.1

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Django
+db.sqlite3
+backend/media/
+backend/staticfiles/
+
+# Secretos
+.env
+*.pem
+
+# Modelos de IA descargados
+*.pt
+*.onnx
+*.task
+
+# Node
+node_modules/
+dist/
+
+# Editores / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Modelo de scikit-learn (se genera con: python manage.py entrenar_modelo)
+*.joblib

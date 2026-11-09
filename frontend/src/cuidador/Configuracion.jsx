@@ -4,6 +4,7 @@ import { api } from "../api";
 import { guardarAjuste, leerAjuste } from "../ajustes";
 import { useSesion } from "../sesion";
 import { useVision } from "../vision/ProveedorVision";
+import { vozDisponible } from "../vision/voz";
 import { Encabezado, useAvisoFlotante } from "./LayoutCuidador";
 
 const VARIABLES = {
@@ -63,6 +64,14 @@ const TIEMPOS = [
   [2500, "2,5 s"],
 ];
 
+const MOVILIDADES = [
+  ["completa", "Ambos brazos", "Coordinación pide estirar los dos brazos."],
+  ["reducida", "Movimiento limitado", "Para silla de ruedas u hombros rígidos: hay que estirarse menos y casi nada por encima de la cabeza."],
+  ["brazo_izquierdo", "Solo el brazo izquierdo", "Las opciones quedan al alcance del brazo izquierdo, sin cruzar el cuerpo."],
+  ["brazo_derecho", "Solo el brazo derecho", "Las opciones quedan al alcance del brazo derecho, sin cruzar el cuerpo."],
+  ["cabeza", "Sin usar los brazos", "En Coordinación se responde girando e inclinando la cabeza: es un ejercicio de cuello."],
+];
+
 /** Perfil de la persona a cargo y preferencias de este equipo. */
 export default function Configuracion() {
   const navegar = useNavigate();
@@ -73,7 +82,11 @@ export default function Configuracion() {
     apellido: paciente?.apellido || "",
     fecha_nacimiento: paciente?.fecha_nacimiento || "",
     tiempo_permanencia_ms: paciente?.tiempo_permanencia_ms || 1500,
+    puntero: paciente?.puntero || "mano",
+    movilidad: paciente?.movilidad || "completa",
+    comandos_voz: paciente?.comandos_voz || false,
   });
+  const elegir = (campo, valor) => setDatos({ ...datos, [campo]: valor });
   const [voz, setVoz] = useState(() => leerAjuste("voz"));
   const [error, setError] = useState(null);
   const [aviso, mostrarAviso] = useAvisoFlotante();
@@ -118,10 +131,10 @@ export default function Configuracion() {
             <input id="nacimiento" type="date" value={datos.fecha_nacimiento} onChange={cambiar("fecha_nacimiento")} />
           </div>
 
-          <h2>Tiempo para elegir con la mano</h2>
+          <h2>Tiempo para elegir</h2>
           <p className="texto-apoyo" style={{ fontSize: 16 }}>
-            Cuánto tiempo debe quedarse quieta la mano sobre una opción. Aumentarlo ayuda si hay temblor o
-            movilidad reducida.
+            Cuánto tiempo debe quedarse quieto el cursor sobre una opción. Aumentarlo ayuda si hay temblor o
+            movilidad reducida. Con la mirada conviene 2 o 2,5 s, para que no se elija algo solo por leerlo.
           </p>
           <div className="segmentado" role="group" aria-label="Tiempo de permanencia">
             {TIEMPOS.map(([ms, texto]) => (
@@ -131,6 +144,44 @@ export default function Configuracion() {
               </button>
             ))}
           </div>
+
+          <h2>Cómo se mueve</h2>
+          <strong>Mover el cursor con</strong>
+          <div className="segmentado" role="group" aria-label="Mover el cursor con">
+            <button type="button" aria-pressed={datos.puntero === "mano"} onClick={() => elegir("puntero", "mano")}>La mano</button>
+            <button type="button" aria-pressed={datos.puntero === "mirada"} onClick={() => elegir("puntero", "mirada")}>La mirada</button>
+          </div>
+          <p className="texto-apoyo" style={{ fontSize: 16 }}>
+            {datos.puntero === "mirada"
+              ? "El cursor sigue hacia dónde mira la persona (cabeza y ojos), sin levantar las manos. Al empezar se le pide mirar 5 puntos."
+              : "El cursor sigue la palma de la mano. Si la persona se cansa de levantar el brazo, elige «La mirada»."}
+          </p>
+
+          <div className="campo">
+            <label htmlFor="movilidad">Movilidad</label>
+            <select id="movilidad" value={datos.movilidad} onChange={cambiar("movilidad")}>
+              {MOVILIDADES.map(([valor, texto]) => <option key={valor} value={valor}>{texto}</option>)}
+            </select>
+          </div>
+          <p className="texto-apoyo" style={{ fontSize: 16 }}>
+            {MOVILIDADES.find(([valor]) => valor === datos.movilidad)?.[2]}
+          </p>
+
+          <strong>Elegir con la voz</strong>
+          <div className="segmentado" role="group" aria-label="Elegir con la voz">
+            {[true, false].map((valor) => (
+              <button key={String(valor)} type="button" aria-pressed={datos.comandos_voz === valor}
+                      disabled={valor && !vozDisponible()} onClick={() => elegir("comandos_voz", valor)}>
+                {valor ? "Activado" : "Desactivado"}
+              </button>
+            ))}
+          </div>
+          <p className="texto-apoyo" style={{ fontSize: 16 }}>
+            {vozDisponible()
+              ? "La persona puede decir en voz alta la opción que quiere («cuchara», «comenzar», «pausa»). Ojo: según el navegador, el audio puede procesarse en servidores de Google o Microsoft; en ese caso ya no queda solo en este equipo."
+              : "Este navegador no reconoce la voz. Usa Google Chrome o Microsoft Edge."}
+          </p>
+
           {error && <p className="error-texto">{error}</p>}
           <div>
             <button type="submit" className="boton boton-principal">{paciente ? "Guardar" : "Crear perfil"}</button>
@@ -145,6 +196,7 @@ export default function Configuracion() {
             <button type="button" aria-pressed={control === "camara"} onClick={() => setControl("camara")}>Cámara</button>
             <button type="button" aria-pressed={control === "mouse"} onClick={() => setControl("mouse")}>Mouse (pruebas)</button>
           </div>
+
           <strong>Narración por voz</strong>
           <div className="segmentado" role="group" aria-label="Narración por voz">
             {[true, false].map((valor) => (

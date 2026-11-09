@@ -25,6 +25,23 @@ class TiempoPermanencia(models.IntegerChoices):
     LENTO = 2500, "2,5 segundos"
 
 
+class Puntero(models.TextChoices):
+    """Qué mueve el cursor en las pantallas de selección."""
+
+    MANO = "mano", "La mano"
+    MIRADA = "mirada", "La mirada"
+
+
+class Movilidad(models.TextChoices):
+    """Cómo puede moverse la persona; adapta la zona activa y la actividad Coordinación."""
+
+    COMPLETA = "completa", "Ambos brazos"
+    REDUCIDA = "reducida", "Movimiento limitado (p. ej. silla de ruedas)"
+    BRAZO_IZQUIERDO = "brazo_izquierdo", "Solo el brazo izquierdo"
+    BRAZO_DERECHO = "brazo_derecho", "Solo el brazo derecho"
+    CABEZA = "cabeza", "Sin usar los brazos (con la cabeza)"
+
+
 def actividades_por_defecto():
     return list(TipoActividad.values)
 
@@ -44,6 +61,11 @@ class AdultoMayor(models.Model):
         default=TiempoPermanencia.NORMAL,
     )
     actividades_habilitadas = models.JSONField(default=actividades_por_defecto)
+    puntero = models.CharField(max_length=10, choices=Puntero.choices, default=Puntero.MANO)
+    movilidad = models.CharField(max_length=20, choices=Movilidad.choices, default=Movilidad.COMPLETA)
+    # Elegir diciendo la opción en voz alta. Apagado por defecto: según el
+    # navegador, el audio puede procesarse en servidores externos.
+    comandos_voz = models.BooleanField(default=False)
     creado = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)
 

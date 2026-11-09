@@ -5,6 +5,7 @@ import { Boton, IconoCirculo, PantallaAdulto } from "../componentes/comunes";
 import { useSesion } from "../sesion";
 import { hablar } from "../sonidos";
 import { useVision } from "../vision/ProveedorVision";
+import ComandosVoz from "../vision/ComandosVoz";
 import Puntero from "../vision/Puntero";
 
 // En estas pantallas todavía no hay cámara, así que no se muestran errores de visión.
@@ -15,6 +16,8 @@ const SIN_CONEXION_MS = 5000;
 export default function LayoutAdulto() {
   const { paciente } = useSesion();
   const { apagar } = useVision();
+  const { pathname } = useLocation();
+  const conVoz = paciente.comandos_voz && !pathname.startsWith("/jugar/fin");
 
   // Al salir del modo adulto mayor se apaga la cámara.
   useEffect(() => apagar, [apagar]);
@@ -24,6 +27,7 @@ export default function LayoutAdulto() {
       <Outlet />
       <AvisosVision />
       <Puntero permanenciaMs={paciente.tiempo_permanencia_ms} />
+      {conVoz && <ComandosVoz />}
     </>
   );
 }

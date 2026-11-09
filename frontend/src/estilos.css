@@ -1191,3 +1191,59 @@ select {
     grid-template-columns: 1fr;
   }
 }
+
+/* Pantalla 03 con la mirada: puntos que la persona sigue con la vista. */
+.calibracion-mirada {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: var(--noche);
+}
+.calibracion-mirada-texto {
+  position: absolute;
+  left: 50%;
+  top: 32%;
+  transform: translateX(-50%);
+  margin: 0;
+  color: var(--blanco);
+  font-size: 32px;
+  white-space: nowrap;
+}
+.calibracion-mirada-punto {
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  margin: -48px 0 0 -48px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, var(--noche) 0 8px, var(--amarillo) 9px 30px, transparent 31px),
+    conic-gradient(var(--verde) calc(var(--progreso, 0) * 360deg), rgba(255, 255, 255, 0.18) 0);
+  animation: aparecer-punto 400ms ease-out;
+}
+@keyframes aparecer-punto {
+  from { transform: scale(2.2); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .calibracion-mirada-punto { animation: none; }
+}
+
+/* Elegir con la voz: indicador abajo al centro, sin tapar las opciones. */
+.chip-voz {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: var(--noche);
+  color: var(--blanco);
+  font-size: 24px;
+  pointer-events: none;
+}
+.chip-voz-activo svg { color: var(--amarillo); }

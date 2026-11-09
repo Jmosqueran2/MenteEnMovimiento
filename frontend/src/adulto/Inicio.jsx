@@ -9,10 +9,15 @@ import { useVision } from "../vision/ProveedorVision";
 /** Pantalla 01: consentimiento de cámara. */
 export function Consentimiento() {
   const navegar = useNavigate();
-  const { encender } = useVision();
+  const { encender, puntero, movilidad } = useVision();
+  const { paciente } = useSesion();
   const [pidiendo, setPidiendo] = useState(false);
+  const uso = (puntero === "mirada" || movilidad === "cabeza"
+    ? "Usamos la cámara solo para ver hacia dónde miras y cómo te mueves."
+    : "Usamos la cámara solo para ver cómo mueves las manos y los brazos.")
+    + (paciente.comandos_voz ? " El micrófono, para oír tus respuestas." : "");
 
-  useEffect(() => hablar("Tu cámara, tu privacidad. Usamos la cámara solo para ver cómo mueves las manos y los brazos."), []);
+  useEffect(() => hablar(`Tu cámara, tu privacidad. ${uso}`), [uso]);
 
   const aceptar = async () => {
     setPidiendo(true);
@@ -32,13 +37,13 @@ export function Consentimiento() {
       acciones={
         <>
           <Boton variante="secundario" onClick={() => navegar("/jugar/sin-permiso")}>Ahora no</Boton>
-          <Boton onClick={aceptar} disabled={pidiendo}>{pidiendo ? "Activando…" : "Aceptar y continuar"}</Boton>
+          <Boton onClick={aceptar} disabled={pidiendo} data-voz="sí, acepto">{pidiendo ? "Activando…" : "Aceptar y continuar"}</Boton>
         </>
       }
     >
       <p className="etiqueta">Paso 1 de 3</p>
       <h2 className="titulo">Tu cámara, tu privacidad</h2>
-      <p className="texto-apoyo">Usamos la cámara solo para ver cómo mueves las manos y los brazos.</p>
+      <p className="texto-apoyo">{uso}</p>
       <div className="tarjetas-tres">
         <div className="tarjeta">
           <IconoCirculo icono={Lock} />
@@ -123,7 +128,7 @@ const CONSEJOS = {
 export function Deteccion() {
   const navegar = useNavigate();
   const { paciente } = useSesion();
-  const { control, camara, estado, stream, calibrar } = useVision();
+  const { control, puntero, camara, estado, stream, calibrar } = useVision();
   const video = useRef(null);
 
   useEffect(() => {
@@ -137,15 +142,19 @@ export function Deteccion() {
 
   const conMouse = control === "mouse";
   const persona = conMouse || Boolean(estado?.postura?.persona);
+  const conMirada = puntero === "mirada";
   const calibracion = estado?.calibracion;
-  const calibrado = conMouse || calibracion?.estado === "completa";
+  const mirada = estado?.calibracion_mirada;
+  const calibrado = conMouse || (conMirada ? mirada?.estado === "completa" : calibracion?.estado === "completa");
   const luzBuena = conMouse || estado?.luz?.estado === "ok";
   const listo = persona && calibrado && luzBuena;
   const alerta = estado?.alertas?.find((a) => CONSEJOS[a]);
+  const comoElegir = conMirada ? "Mira Comenzar sin mover la vista." : "Mantén la mano quieta sobre Comenzar.";
+  const calibrandoMirada = conMirada && persona && luzBuena && mirada?.estado === "en_progreso";
 
   useEffect(() => {
-    if (listo) hablar(`¡Hola, ${paciente.nombre}! Ya te vemos. Mantén la mano quieta sobre Comenzar.`);
-  }, [listo, paciente.nombre]);
+    if (listo) hablar(`¡Hola, ${paciente.nombre}! Ya te vemos. ${comoElegir}`);
+  }, [listo, paciente.nombre, comoElegir]);
 
   return (
     <PantallaAdulto
@@ -159,7 +168,7 @@ export function Deteccion() {
       acciones={
         <>
           <Boton variante="secundario" icono={ArrowLeft} onClick={() => navegar("/jugar")}>Volver</Boton>
-          <Boton icono={Play} disabled={!listo} onClick={() => navegar("/jugar/menu")}>Comenzar</Boton>
+          <Boton icono={Play} disabled={!listo} onClick={() => navegar("/jugar/menu")} data-voz="empezar, empecemos, listo">Comenzar</Boton>
         </>
       }
     >
@@ -182,14 +191,15 @@ export function Deteccion() {
           </>
         )}
       </div>
-      {!conMouse && persona && !calibrado && (
+      {calibrandoMirada && <CalibracionMirada calibracion={mirada} ojosAbiertos={estado?.rostro?.ojos_abiertos} />}
+      {!conMouse && !conMirada && persona && !calibrado && (
         <div style={{ display: "grid", gap: 10 }}>
           <p>Ajustando el sistema a tu postura… {Math.round((calibracion?.progreso || 0) * 100)} %</p>
           <div className="barra"><span style={{ width: `${(calibracion?.progreso || 0) * 100}%` }} /></div>
         </div>
       )}
       <p className="texto-apoyo">
-        {listo ? "Mantén la mano quieta sobre Comenzar." : alerta ? CONSEJOS[alerta] : "Un momento, por favor…"}
+        {listo ? comoElegir : alerta ? CONSEJOS[alerta] : "Un momento, por favor…"}
         {!conMouse && calibrado && (
           <button type="button" className="boton boton-secundario" style={{ marginLeft: 16, minHeight: 48, fontSize: 20, padding: "0 20px" }} onClick={calibrar} data-elegible="">
             <RotateCcw size={20} /> Volver a calibrar
@@ -197,6 +207,35 @@ export function Deteccion() {
         )}
       </p>
     </PantallaAdulto>
+  );
+}
+
+/**
+ * Calibración de la mirada: un punto grande que la persona sigue con la vista
+ * (y con la cabeza, si quiere). Cubre toda la pantalla porque los puntos van
+ * hasta cerca de las esquinas.
+ */
+function CalibracionMirada({ calibracion, ojosAbiertos }) {
+  const indice = calibracion.indice ?? 0;
+  const [x, y] = calibracion.punto || [0.5, 0.5];
+
+  useEffect(() => {
+    hablar(indice === 0
+      ? "Ahora mira el punto amarillo. Síguelo con la vista cada vez que cambie de lugar."
+      : "Muy bien. Mira el punto otra vez.");
+  }, [indice]);
+
+  return (
+    <div className="calibracion-mirada" role="status" aria-live="polite">
+      <p className="calibracion-mirada-texto">
+        {ojosAbiertos === false ? "Abre los ojos y mira el punto" : "Mira el punto amarillo"} · {indice + 1} de 5
+      </p>
+      <span
+        key={indice}
+        className="calibracion-mirada-punto"
+        style={{ left: `${x * 100}%`, top: `${y * 100}%`, "--progreso": calibracion.progreso * 5 - indice }}
+      />
+    </div>
   );
 }
 

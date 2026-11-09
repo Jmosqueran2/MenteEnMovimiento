@@ -65,6 +65,19 @@ class PacientesTest(BaseAPITest):
                               {"actividades_habilitadas": ["memoria", "baile"]}, format="json")
         self.assertEqual(r.status_code, 400)
 
+    def test_perfil_de_movilidad(self):
+        self.assertEqual(self.client.get(f"/api/pacientes/{self.rosa.pk}/").data["puntero"], "mano")
+        r = self.client.patch(f"/api/pacientes/{self.rosa.pk}/",
+                              {"puntero": "mirada", "movilidad": "brazo_derecho", "comandos_voz": True},
+                              format="json")
+        self.assertEqual(r.status_code, 200)
+        self.rosa.refresh_from_db()
+        self.assertEqual((self.rosa.puntero, self.rosa.movilidad, self.rosa.comandos_voz),
+                         ("mirada", "brazo_derecho", True))
+        for campo, valor in (("puntero", "pie"), ("movilidad", "volar")):
+            r = self.client.patch(f"/api/pacientes/{self.rosa.pk}/", {campo: valor}, format="json")
+            self.assertEqual(r.status_code, 400)
+
     def test_seguimiento_sin_datos(self):
         r = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento/")
         self.assertEqual(r.status_code, 200)

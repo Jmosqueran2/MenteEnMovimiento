@@ -13,6 +13,9 @@ def _lista(valor):
 class Config:
     modelo_manos: Path = field(default_factory=lambda: Path(
         os.getenv("VISION_MODELO_MANOS", RAIZ / "modelos" / "hand_landmarker.task")))
+    # Opcional: sin este archivo el servicio funciona, pero no ofrece el cursor con la mirada.
+    modelo_rostro: Path = field(default_factory=lambda: Path(
+        os.getenv("VISION_MODELO_ROSTRO", RAIZ / "modelos" / "face_landmarker.task")))
     modelo_pose: Path = field(default_factory=lambda: Path(
         os.getenv("VISION_MODELO_POSE", RAIZ / "modelos" / "yolov8n-pose.pt")))
     # Misma clave que DJANGO_SECRET_KEY: así se validan los JWT que emite el backend.

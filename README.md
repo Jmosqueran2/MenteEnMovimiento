@@ -70,7 +70,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements-dev.txt
 python arreglar_opencv.py         # deja un solo paquete de OpenCV
-python descargar_modelos.py       # MediaPipe Hands + YOLOv8n-pose (~14 MB)
+python descargar_modelos.py       # MediaPipe Hands + Face + YOLOv8n-pose (~18 MB)
 copy .env.example .env
 uvicorn app.main:app --port 8001 --env-file .env
 ```
@@ -82,13 +82,14 @@ Página de prueba con tu cámara: http://localhost:8001 · Pruebas: `python -m p
 |---|---|
 | **OpenCV** | Decodifica el JPEG, aplica espejo, mide luz (poca luz / contraluz) |
 | **MediaPipe Hands** | 21 puntos de la mano → cursor (centro de la palma) y gesto (abierta, cerrada, apunta, pinza) |
+| **MediaPipe Face Landmarker** | 478 puntos de la cara con iris → cursor con la mirada (cabeza + ojos) |
 | **YOLOv8n-Pose** | 17 puntos del cuerpo → presencia, rostro visible, distancia, centrado, calibración y brazos estirados (Coordinación) |
 | **Filtro One Euro** | Suaviza el cursor para que el temblor no provoque selecciones involuntarias |
 
 ### Protocolo WebSocket `/ws/vision?token=<access JWT>`
 El navegador envía frames JPEG binarios (320×240) y uno nuevo solo al recibir
 la respuesta del anterior. Mensajes de control en texto JSON:
-`{"accion":"config","modo":"seleccion"|"coordinacion","espejo":true}` y `{"accion":"calibrar"}`.
+`{"accion":"config","modo":"seleccion"|"coordinacion","espejo":true,"puntero":"mano"|"mirada","movilidad":"completa"|…}` y `{"accion":"calibrar"}`.
 
 Respuesta por frame:
 ```json
@@ -140,6 +141,43 @@ volver a elegir, así un botón que aparece debajo de la mano no se pulsa solo.
 
 En **Configuración → Control → Mouse (pruebas)** el cursor sigue al mouse en vez
 de a la mano, útil para probar sin cámara.
+
+### Cursor con la mirada
+Para quien se cansa de tener el brazo levantado: en **Configuración → Mover el
+cursor con → La mirada** el cursor sigue hacia dónde mira la persona.
+
+- Una cámara web común no ve el iris con precisión suficiente por sí solo, así
+  que se combinan la orientación de la cabeza (estable) y la posición de los
+  ojos (fina). Basta con mover solo los ojos, solo la cabeza o ambos.
+- En la pantalla 03 la persona mira 5 puntos (~10 s). Una regresión lineal
+  aprende su relación entre cabeza, ojos y pantalla. Si se cae la conexión, el
+  navegador reenvía la calibración y no hay que repetirla.
+- Al parpadear el cursor se queda quieto, así no se pierde la permanencia.
+- En **Coordinación** se sigue usando la mano: el ejercicio es estirar los brazos.
+- Con la mirada se recomienda un tiempo de permanencia de 2 o 2,5 s.
+
+Mensajes extra en modo mirada: `"rostro": {"detectado", "ojos_abiertos"}` y
+`"calibracion_mirada": {"estado", "progreso", "indice", "punto", "modelo"}`;
+`{"accion":"config","modelo_mirada":{...}}` restaura una calibración.
+
+### Perfil de movilidad y voz
+Se guardan en el perfil de la persona (`puntero`, `movilidad`, `comandos_voz`),
+así la acompañan en cualquier equipo. Se editan en **Configuración → Cómo se mueve**.
+
+| Movilidad | Selección y Coordinación |
+|---|---|
+| `completa` | Ambos brazos (comportamiento original) |
+| `reducida` | Silla de ruedas u hombros rígidos: 20 % menos alcance y casi nada por encima de la cabeza |
+| `brazo_izquierdo` / `brazo_derecho` | La zona activa se corre hacia ese lado para no cruzar el cuerpo |
+| `cabeza` | En Coordinación el cursor sigue solo el giro de la cabeza (ejercicio de cuello); necesita `face_landmarker.task` |
+
+**Elegir con la voz** (apagado por defecto): la persona dice el nombre de la
+opción ("cuchara", "comenzar", "pausa") y se pulsa el elemento `data-elegible`
+cuyo texto coincide; `data-voz="sí, acepto"` agrega sinónimos. Si hay empate no
+se elige nada. Lo que dice la narración se ignora para no elegir solo. Usa el
+reconocimiento de voz del navegador (Chrome o Edge): salvo que Chrome pueda
+procesarlo en el equipo, **el audio se envía a Google o Microsoft**, y así se le
+advierte al cuidador antes de activarlo.
 
 ### Ajustes de la prueba de usabilidad incluidos
 Actividades deshabilitadas ocultas en el menú · tiempo de permanencia

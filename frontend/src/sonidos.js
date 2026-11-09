@@ -1,6 +1,9 @@
 import { leerAjuste } from "./ajustes";
 
 let contexto = null;
+// Lo último que dijo la narración: los comandos de voz no deben tomarlo como
+// si lo hubiera dicho la persona.
+let ultimaNarracion = { texto: "", fin: 0 };
 
 function tonos(frecuencias, duracion, forma, volumen) {
   try {
@@ -40,7 +43,16 @@ export function hablar(texto) {
   frase.rate = 0.9;
   const voz = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("es"));
   if (voz) frase.voice = voz;
+  ultimaNarracion = { texto, fin: Infinity };
+  frase.onend = frase.onerror = () => { ultimaNarracion.fin = performance.now(); };
   window.speechSynthesis.speak(frase);
+}
+
+/** ¿Lo que se oyó es la propia narración (sonando o recién terminada)? */
+export function esEco(oido, normalizar) {
+  if ("speechSynthesis" in window && window.speechSynthesis.speaking) return true;
+  const reciente = performance.now() - ultimaNarracion.fin < 3000;
+  return reciente && normalizar(ultimaNarracion.texto).includes(normalizar(oido));
 }
 
 export const callar = () => "speechSynthesis" in window && window.speechSynthesis.cancel();

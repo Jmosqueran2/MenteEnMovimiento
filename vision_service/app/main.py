@@ -3,8 +3,9 @@
 Protocolo del WebSocket /ws/vision?token=<access JWT>:
   cliente → servidor
     · binario: un frame JPEG (se recomienda 320×240, calidad 0.7)
-    · texto JSON: {"accion": "config", "modo": "seleccion"|"coordinacion", "espejo": true}
-                  {"accion": "calibrar"}
+    · texto JSON: {"accion": "config", "modo": "seleccion"|"coordinacion", "espejo": true,
+                   "puntero": "mano"|"mirada", "modelo_mirada": {"wx": [...], "wy": [...]}}
+                  {"accion": "calibrar"}   (con puntero "mirada" también recalibra la mirada)
   servidor → cliente
     · {"tipo": "estado", ...} por cada frame (ver README)
     · {"tipo": "config", ...} al cambiar la configuración

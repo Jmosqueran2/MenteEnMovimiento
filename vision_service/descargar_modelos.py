@@ -8,6 +8,9 @@ MODELOS = Path(__file__).resolve().parent / "modelos"
 MANOS_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
              "hand_landmarker/float16/latest/hand_landmarker.task")
 
+ROSTRO_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+              "face_landmarker/float16/latest/face_landmarker.task")
+
 
 def main():
     MODELOS.mkdir(exist_ok=True)
@@ -15,6 +18,11 @@ def main():
     if not manos.exists():
         print("Descargando MediaPipe Hand Landmarker…")
         urllib.request.urlretrieve(MANOS_URL, manos)
+
+    rostro = MODELOS / "face_landmarker.task"
+    if not rostro.exists():
+        print("Descargando MediaPipe Face Landmarker (cursor con la mirada)…")
+        urllib.request.urlretrieve(ROSTRO_URL, rostro)
 
     pose = MODELOS / "yolov8n-pose.pt"
     if not pose.exists():

@@ -22,6 +22,9 @@ class AdultoMayorSerializer(serializers.ModelSerializer):
             "nivel_texto",
             "tiempo_permanencia_ms",
             "actividades_habilitadas",
+            "puntero",
+            "movilidad",
+            "comandos_voz",
             "creado",
             "actualizado",
         ]

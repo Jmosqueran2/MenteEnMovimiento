@@ -98,21 +98,41 @@ class ZonaActiva:
 ALCANCE = {"seleccion": 1.1, "coordinacion": 1.6}
 TAMANO_MINIMO_ZONA = 0.25
 
+# Movilidad de la persona (la elige el cuidador en su perfil).
+MOVILIDADES = ("completa", "reducida", "brazo_izquierdo", "brazo_derecho", "cabeza")
+# Movimiento limitado (silla de ruedas, hombros rígidos): menos alcance y casi
+# nada por encima de la cabeza, donde más cuesta llegar sentado.
+FACTOR_REDUCIDA = 0.8
+ARRIBA_REDUCIDA = 0.6
+# Con un solo brazo la zona se corre hacia ese lado: cruzar el cuerpo cansa.
+CORRIMIENTO_UN_BRAZO = 0.6
 
-def zona_desde_hombros(hombro_izq, hombro_der, modo="seleccion") -> ZonaActiva:
+
+def zona_desde_hombros(hombro_izq, hombro_der, modo="seleccion", movilidad="completa") -> ZonaActiva:
     """Calibración: adapta la zona activa al cuerpo y a la distancia de la persona.
 
-    Los hombros llegan normalizados (0–1). En modo coordinación la zona es más
-    grande, así que para llegar a las esquinas hay que estirar los brazos.
+    Los hombros llegan normalizados (0–1) y la imagen está en espejo, así que el
+    brazo izquierdo de la persona queda a la izquierda de la pantalla: con un
+    solo brazo la zona se corre hacia ese lado de la imagen (no se usan las
+    etiquetas izquierda/derecha de YOLO, que el espejo invierte).
+    En modo coordinación la zona es más grande, así que para llegar a las
+    esquinas hay que estirar los brazos.
     """
     alcance = ALCANCE.get(modo, ALCANCE["seleccion"])
+    arriba = 1.1
+    if movilidad == "reducida":
+        alcance *= FACTOR_REDUCIDA
+        arriba = ARRIBA_REDUCIDA
     cx = (hombro_izq[0] + hombro_der[0]) / 2
     cy = (hombro_izq[1] + hombro_der[1]) / 2
     ancho = max(abs(hombro_izq[0] - hombro_der[0]), 0.05)
+    if movilidad in ("brazo_izquierdo", "brazo_derecho"):
+        lado = -1 if movilidad == "brazo_izquierdo" else 1
+        cx += lado * ancho * CORRIMIENTO_UN_BRAZO
 
     medio_ancho = max(ancho * alcance, TAMANO_MINIMO_ZONA / 2)
     x0, x1 = cx - medio_ancho, cx + medio_ancho
-    y0 = cy - ancho * alcance * 1.1     # hacia arriba: por encima de la cabeza
+    y0 = cy - ancho * alcance * arriba  # hacia arriba: por encima de la cabeza
     y1 = cy + ancho * alcance * 0.5     # hacia abajo: a la altura del pecho
     if y1 - y0 < TAMANO_MINIMO_ZONA:
         y1 = y0 + TAMANO_MINIMO_ZONA
@@ -201,3 +221,113 @@ def alertas(luz, postura) -> list:
     if postura["centrado"] is False:
         lista.append("descentrado")
     return lista
+
+
+# --- Mirada (478 puntos de MediaPipe Face Landmarker, con iris) ----------------
+#
+# Con una cámara web común el iris mide pocos píxeles, así que solo con los ojos
+# el cursor temblaría mucho. Se combinan dos señales: hacia dónde apunta la
+# cabeza (gruesa pero estable) y hacia dónde se mueven los ojos dentro de ella
+# (fina). La calibración aprende cuánto pesa cada una en esta persona.
+
+OJOS = (  # (esquina, esquina, párpado superior, párpado inferior, centro del iris)
+    (33, 133, 159, 145, 468),
+    (362, 263, 386, 374, 473),
+)
+PUNTA_NARIZ = 1
+OJO_CERRADO = 0.12  # alto / ancho del ojo por debajo del cual se considera parpadeo
+
+# Dónde aparece el punto que la persona debe mirar al calibrar (0–1 de la pantalla).
+PUNTOS_CALIBRACION_MIRADA = ((0.5, 0.5), (0.12, 0.15), (0.88, 0.15), (0.88, 0.85), (0.12, 0.85))
+REGULARIZACION = 1e-4
+
+
+def rasgos_mirada(puntos) -> dict:
+    """puntos: 478 × (x_px, y_px). Las medidas se dividen por el tamaño de la
+    cara, así no cambian si la persona se acerca, se aleja o se corre de lado."""
+    centros, iris_x, iris_y, aperturas = [], [], [], []
+    for a, b, sup, inf, iris in OJOS:
+        ancho = _dist(puntos[a], puntos[b]) or 1.0
+        cx = (puntos[a][0] + puntos[b][0]) / 2
+        cy = (puntos[a][1] + puntos[b][1]) / 2
+        centros.append((cx, cy))
+        iris_x.append((puntos[iris][0] - cx) / ancho)
+        iris_y.append((puntos[iris][1] - (puntos[sup][1] + puntos[inf][1]) / 2) / ancho)
+        aperturas.append(_dist(puntos[sup], puntos[inf]) / ancho)
+
+    entre_ojos = _dist(*centros) or 1.0
+    medio = ((centros[0][0] + centros[1][0]) / 2, (centros[0][1] + centros[1][1]) / 2)
+    nariz = puntos[PUNTA_NARIZ]
+    apertura = sum(aperturas) / 2
+    return {
+        "cabeza_x": (nariz[0] - medio[0]) / entre_ojos,
+        "cabeza_y": (nariz[1] - medio[1]) / entre_ojos,
+        "iris_x": sum(iris_x) / 2,
+        "iris_y": sum(iris_y) / 2,
+        "apertura": apertura,
+        "ojos_abiertos": apertura >= OJO_CERRADO,
+    }
+
+
+def _variables(rasgos, eje):
+    return [1.0, rasgos[f"cabeza_{eje}"], rasgos[f"iris_{eje}"]]
+
+
+@dataclass
+class ModeloMirada:
+    """Regresión lineal por eje: pantalla = w0 + w1·cabeza + w2·iris."""
+    wx: list
+    wy: list
+
+    def mapear(self, rasgos):
+        def eje(pesos, nombre):
+            valor = sum(w * v for w, v in zip(pesos, _variables(rasgos, nombre)))
+            return min(max(valor, 0.0), 1.0)
+        return eje(self.wx, "x"), eje(self.wy, "y")
+
+    def como_dict(self):
+        return {"wx": [float(w) for w in self.wx], "wy": [float(w) for w in self.wy]}
+
+    @classmethod
+    def desde_dict(cls, datos):
+        """Restaura un modelo enviado por el cliente (p. ej. tras reconectar)."""
+        wx, wy = datos["wx"], datos["wy"]
+        if len(wx) != 3 or len(wy) != 3:
+            raise ValueError("El modelo de mirada debe tener 3 pesos por eje.")
+        pesos = [float(w) for w in (*wx, *wy)]
+        if not all(math.isfinite(w) for w in pesos):
+            raise ValueError("Pesos no válidos.")
+        return cls(pesos[:3], pesos[3:])
+
+
+# Coordinación con la cabeza (para quien no puede usar los brazos): el cursor
+# sigue solo el giro de la cabeza, sin los ojos, y llegar a las esquinas exige
+# girar e inclinar el cuello. Es un ejercicio, no un atajo.
+RANGO_CABEZA_X = 0.6   # giro: de esquina a esquina ≈ 30° a cada lado
+RANGO_CABEZA_Y = 0.45  # inclinación hacia arriba y abajo, que cuesta más
+
+
+def cursor_cabeza(rasgos, neutro):
+    """neutro: (cabeza_x, cabeza_y) mirando al frente, medido al empezar."""
+    u = 0.5 + (rasgos["cabeza_x"] - neutro[0]) / RANGO_CABEZA_X
+    v = 0.5 + (rasgos["cabeza_y"] - neutro[1]) / RANGO_CABEZA_Y
+    return min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0)
+
+
+def ajustar_mirada(muestras) -> tuple:
+    """muestras: lista de (rasgos, (x, y) del punto mirado).
+
+    Mínimos cuadrados con una regularización pequeña (ridge): si la persona solo
+    movió los ojos y no la cabeza, esa variable no aporta y su peso queda en ~0
+    en vez de dispararse. Devuelve (modelo, error medio en fracción de pantalla).
+    """
+    def resolver(eje, indice):
+        X = np.array([_variables(r, eje) for r, _ in muestras])
+        y = np.array([p[indice] for _, p in muestras])
+        penalizacion = np.eye(3) * REGULARIZACION * len(muestras)
+        penalizacion[0, 0] = 0.0  # el término independiente no se penaliza
+        return np.linalg.solve(X.T @ X + penalizacion, X.T @ y).tolist()
+
+    modelo = ModeloMirada(resolver("x", 0), resolver("y", 1))
+    errores = [math.hypot(*(np.subtract(modelo.mapear(r), p))) for r, p in muestras]
+    return modelo, float(np.mean(errores))

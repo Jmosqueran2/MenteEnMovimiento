@@ -260,6 +260,15 @@ function TarjetaOpcion({ opcion, ...props }) {
 
 function Pregunta({ tipo, indice, total, marcas, pregunta, onElegir, onPausa }) {
   const coordinacion = tipo === "coordinacion";
+  const { puntero, movilidad } = useVision();
+  const { paciente } = useSesion();
+  const conMirada = puntero === "mirada" && !coordinacion;
+  const conCabeza = coordinacion && movilidad === "cabeza";
+  const consigna = !coordinacion ? "Elige la respuesta"
+    : conCabeza ? "Gira la cabeza hacia la respuesta"
+    : movilidad === "brazo_izquierdo" ? "Estira el brazo izquierdo hacia la respuesta"
+    : movilidad === "brazo_derecho" ? "Estira el brazo derecho hacia la respuesta"
+    : "Estira el brazo hacia la respuesta";
   return (
     <PantallaAdulto
       lateral={
@@ -269,13 +278,13 @@ function Pregunta({ tipo, indice, total, marcas, pregunta, onElegir, onPausa }) 
           <p>Pregunta {indice + 1} de {total}</p>
           <h1 className="pregunta">{pregunta.enunciado}</h1>
           <Estimulo pregunta={pregunta} />
-          <Boton variante="secundario" icono={Pause} onClick={onPausa} style={{ alignSelf: "flex-start" }}>
+          <Boton variante="secundario" icono={Pause} onClick={onPausa} style={{ alignSelf: "flex-start" }} data-voz="parar, espera, descansar">
             Pausa
           </Boton>
         </>
       }
     >
-      <p className="etiqueta">{coordinacion ? "Estira el brazo hacia la respuesta" : "Elige la respuesta"}</p>
+      <p className="etiqueta">{consigna}</p>
       <div className={`opciones ${coordinacion ? "opciones-coordinacion" : ""}`}>
         {pregunta.opciones.map((opcion, i) => (
           <TarjetaOpcion
@@ -287,7 +296,12 @@ function Pregunta({ tipo, indice, total, marcas, pregunta, onElegir, onPausa }) 
           />
         ))}
       </div>
-      <p className="texto-apoyo">Mueve la mano hacia la respuesta y déjala quieta.</p>
+      <p className="texto-apoyo">
+        {conMirada ? "Mira la respuesta y mantén la vista en ella."
+          : conCabeza ? "Apunta con la cabeza a la respuesta y quédate quieto un momento."
+          : "Mueve la mano hacia la respuesta y déjala quieta."}
+        {paciente.comandos_voz && " También puedes decirla en voz alta."}
+      </p>
     </PantallaAdulto>
   );
 }
@@ -314,7 +328,7 @@ function Acierto({ indice, total, marcas, resultado, menu, onSiguiente, revelada
       acciones={
         <>
           <Boton variante="secundario" icono={ArrowLeft} onClick={menu}>Volver al menú</Boton>
-          <Boton icono={ultima ? Flag : ArrowRight} onClick={onSiguiente}>{ultima ? "Ver resultados" : "Siguiente"}</Boton>
+          <Boton icono={ultima ? Flag : ArrowRight} onClick={onSiguiente} data-voz="sigue, otra, resultados">{ultima ? "Ver resultados" : "Siguiente"}</Boton>
         </>
       }
     >
@@ -351,7 +365,7 @@ function Reintento({ indice, total, resultado, menu, onReintentar }) {
       acciones={
         <>
           <Boton variante="secundario" icono={ArrowLeft} onClick={menu}>Volver al menú</Boton>
-          <Boton icono={RotateCw} onClick={onReintentar}>Intentar de nuevo</Boton>
+          <Boton icono={RotateCw} onClick={onReintentar} data-voz="otra vez, de nuevo">Intentar de nuevo</Boton>
         </>
       }
     >

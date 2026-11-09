@@ -76,3 +76,58 @@ def test_exige_token_si_hay_secreto():
         with cliente.websocket_connect(f"/ws/vision?token={token}") as ws:
             ws.send_text('{"accion": "calibrar"}')
             assert ws.receive_json()["tipo"] == "config"
+
+
+def foto_rostro():
+    """Zidane, recortado para que la cara ocupe lo que ocuparía frente a la cámara."""
+    imagen = cv2.imread(str(ASSETS / "zidane.jpg"))[0:720, 700:1280]
+    return jpeg(cv2.resize(imagen, (387, 480)))
+
+
+def test_puntero_con_la_mirada(cliente):
+    with cliente.websocket_connect("/ws/vision") as ws:
+        ws.send_text('{"accion": "config", "puntero": "mirada"}')
+        config = ws.receive_json()
+        assert config["puntero"] == "mirada"
+        assert config["mirada_disponible"] is True
+
+        for _ in range(3):
+            ws.send_bytes(foto_rostro())
+            estado = ws.receive_json()
+        assert estado["rostro"]["detectado"] is True
+        # La calibración empieza sola al ver la cara; sin calibrar no hay cursor.
+        assert estado["calibracion_mirada"]["estado"] == "en_progreso"
+        assert estado["calibracion_mirada"]["punto"] == [0.5, 0.5]
+        assert estado["cursor"] is None
+
+        # Un modelo guardado por el cliente (p. ej. al reconectar) se restaura.
+        ws.send_text('{"accion": "config", "modelo_mirada": {"wx": [0.5, 0, 0], "wy": [0.4, 0, 0]}}')
+        assert ws.receive_json()["calibracion_mirada"]["estado"] == "completa"
+        ws.send_bytes(foto_rostro())
+        estado = ws.receive_json()
+        assert estado["cursor"] == {"x": 0.5, "y": 0.4, "fuente": "mirada"}
+
+        # En Coordinación se vuelve a la mano: el ejercicio es estirar los brazos.
+        ws.send_text('{"accion": "config", "modo": "coordinacion"}')
+        ws.receive_json()
+        ws.send_bytes(foto_rostro())
+        cursor = ws.receive_json()["cursor"]
+        assert cursor is None or cursor["fuente"] == "mano"
+
+        ws.send_text('{"accion": "config", "modelo_mirada": {"wx": [1], "wy": []}}')
+        assert ws.receive_json()["tipo"] == "error"
+
+
+def test_coordinacion_con_la_cabeza(cliente):
+    with cliente.websocket_connect("/ws/vision") as ws:
+        ws.send_text('{"accion": "config", "movilidad": "cabeza", "modo": "coordinacion"}')
+        assert ws.receive_json()["movilidad"] == "cabeza"
+        cursores = []
+        for _ in range(11):
+            ws.send_bytes(foto_rostro())
+            cursores.append(ws.receive_json()["cursor"])
+    # Primero fija la posición neutra (10 frames) y luego el cursor sale de la cabeza.
+    assert all(c is None for c in cursores[:9])
+    assert cursores[-1]["fuente"] == "cabeza"
+    assert cursores[-1]["x"] == pytest.approx(0.5, abs=0.02)
+    assert cursores[-1]["y"] == pytest.approx(0.5, abs=0.02)

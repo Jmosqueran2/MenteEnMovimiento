@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { tokenDeAcceso } from "../api";
 import { guardarAjuste, leerAjuste } from "../ajustes";
+import { useSesion } from "../sesion";
 
 /*
  * Cámara + WebSocket con el microservicio de visión.
@@ -11,6 +12,8 @@ import { guardarAjuste, leerAjuste } from "../ajustes";
 
 const ContextoVision = createContext(null);
 const ANCHO_FRAME = 320;
+// Con la mirada se manda más resolución: el iris mide pocos píxeles.
+const ANCHO_FRAME_MIRADA = 640;
 const CALIDAD_JPEG = 0.7;
 const REINTENTO_CAMARA_MS = 3000;
 const REINTENTO_WS_MS = 2000;
@@ -19,6 +22,11 @@ const RESTRICCIONES = { video: { width: { ideal: 640 }, height: { ideal: 480 }, 
 
 export function ProveedorVision({ children }) {
   const [control, setControlEstado] = useState(() => leerAjuste("control"));
+  // Qué mueve el cursor y cómo puede moverse la persona: vienen de su perfil,
+  // así la acompañan en cualquier equipo.
+  const { paciente } = useSesion();
+  const puntero = paciente?.puntero || "mano";
+  const movilidad = paciente?.movilidad || "completa";
   // apagada | solicitando | activa | denegada | desconectada
   const [camara, setCamara] = useState("apagada");
   // cerrada | conectando | abierta
@@ -31,6 +39,11 @@ export function ProveedorVision({ children }) {
     ws: null,
     stream: null,
     modo: "seleccion",
+    puntero: "mano",
+    movilidad: "completa",
+    // Calibración de la mirada de esta visita: se reenvía si se reconecta el
+    // WebSocket, para no tener que volver a mirar los 5 puntos.
+    modeloMirada: null,
     enVuelo: false,
     enviadoEn: 0,
     temporizadores: {},
@@ -51,7 +64,7 @@ export function ProveedorVision({ children }) {
       r.temporizadores.frame = setTimeout(enviarFrame, 100);
       return;
     }
-    lienzo.width = ANCHO_FRAME;
+    lienzo.width = r.puntero === "mirada" ? ANCHO_FRAME_MIRADA : ANCHO_FRAME;
     lienzo.height = Math.round((ANCHO_FRAME * video.videoHeight) / video.videoWidth);
     lienzo.getContext("2d").drawImage(video, 0, 0, lienzo.width, lienzo.height);
     r.enVuelo = true;
@@ -79,14 +92,20 @@ export function ProveedorVision({ children }) {
 
     ws.onopen = () => {
       setConexion("abierta");
-      ws.send(JSON.stringify({ accion: "config", modo: r.modo, espejo: true }));
+      const config = { accion: "config", modo: r.modo, espejo: true, puntero: r.puntero, movilidad: r.movilidad };
+      if (r.puntero === "mirada" && r.modeloMirada) config.modelo_mirada = r.modeloMirada;
+      ws.send(JSON.stringify(config));
       enviarFrame();
     };
     ws.onmessage = (evento) => {
       const datos = JSON.parse(evento.data);
       if (datos.tipo === "estado" || datos.tipo === "error") {
         r.enVuelo = false;
-        if (datos.tipo === "estado") setEstado(datos);
+        if (datos.tipo === "estado") {
+          const mirada = datos.calibracion_mirada;
+          if (mirada?.estado === "completa" && mirada.modelo) r.modeloMirada = mirada.modelo;
+          setEstado(datos);
+        }
         enviarFrame();
       }
     };
@@ -183,7 +202,18 @@ export function ProveedorVision({ children }) {
     [r, enviarControl],
   );
 
-  const calibrar = useCallback(() => enviarControl({ accion: "calibrar" }), [enviarControl]);
+  const calibrar = useCallback(() => {
+    r.modeloMirada = null;
+    enviarControl({ accion: "calibrar" });
+  }, [r, enviarControl]);
+
+  useEffect(() => {
+    if (r.puntero === puntero && r.movilidad === movilidad) return;
+    if (r.puntero !== puntero) r.modeloMirada = null; // otra persona u otro puntero
+    r.puntero = puntero;
+    r.movilidad = movilidad;
+    enviarControl({ accion: "config", puntero, movilidad });
+  }, [r, puntero, movilidad, enviarControl]);
 
   const setControl = useCallback(
     (nuevo) => {
@@ -210,6 +240,9 @@ export function ProveedorVision({ children }) {
   const valor = {
     control,
     setControl,
+    // Con el mouse no hay mirada: así las pantallas solo preguntan por "mirada".
+    puntero: control === "camara" ? puntero : "mano",
+    movilidad,
     camara,
     conexion,
     estado,

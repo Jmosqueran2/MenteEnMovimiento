@@ -30,6 +30,8 @@ class Puntero(models.TextChoices):
 
     MANO = "mano", "La mano"
     MIRADA = "mirada", "La mirada"
+    # Sin cámara: la persona dice en voz alta la opción que quiere.
+    VOZ = "voz", "La voz"
 
 
 class Movilidad(models.TextChoices):

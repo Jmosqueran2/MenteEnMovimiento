@@ -57,10 +57,13 @@ export function Pasos({ actual }) {
 }
 
 export function EstadoCamara() {
-  const { control, camara, conexion } = useVision();
+  const { control, puntero, camara, conexion } = useVision();
   let texto = "Cámara en espera";
   let tono = "gris";
-  if (control === "mouse") {
+  if (puntero === "voz") {
+    texto = "Elige con la voz (cámara apagada)";
+    tono = "verde";
+  } else if (control === "mouse") {
     texto = "Control con mouse (pruebas)";
     tono = "amarillo";
   } else if (camara === "desconectada" || camara === "denegada") {

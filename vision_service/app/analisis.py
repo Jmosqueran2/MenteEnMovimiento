@@ -230,52 +230,96 @@ def alertas(luz, postura) -> list:
 # cabeza (gruesa pero estable) y hacia dónde se mueven los ojos dentro de ella
 # (fina). La calibración aprende cuánto pesa cada una en esta persona.
 
-OJOS = (  # (esquina, esquina, párpado superior, párpado inferior, centro del iris)
-    (33, 133, 159, 145, 468),
-    (362, 263, 386, 374, 473),
+OJOS = (  # (esquina, esquina, párpado superior, párpado inferior, iris: centro + 4 del borde)
+    (33, 133, 159, 145, (468, 469, 470, 471, 472)),
+    (362, 263, 386, 374, (473, 474, 475, 476, 477)),
 )
 PUNTA_NARIZ = 1
-OJO_CERRADO = 0.12  # alto / ancho del ojo por debajo del cual se considera parpadeo
+# Alto / ancho del ojo por debajo del cual se considera parpadeo, mientras aún no
+# se conoce la apertura habitual de la persona.
+OJO_CERRADO = 0.08
+# Con la apertura habitual ya medida: parpadeo = menos de esta fracción de ella.
+# Así no se confunde con un parpadeo eterno a quien tiene los párpados caídos.
+FRACCION_PARPADEO = 0.55
 
 # Dónde aparece el punto que la persona debe mirar al calibrar (0–1 de la pantalla).
-PUNTOS_CALIBRACION_MIRADA = ((0.5, 0.5), (0.12, 0.15), (0.88, 0.15), (0.88, 0.85), (0.12, 0.85))
+# 9 puntos (centro, esquinas y lados): con 5 el ajuste vertical quedaba muy pobre.
+PUNTOS_CALIBRACION_MIRADA = (
+    (0.5, 0.5),
+    (0.12, 0.15), (0.5, 0.15), (0.88, 0.15),
+    (0.88, 0.5), (0.88, 0.85), (0.5, 0.85),
+    (0.12, 0.85), (0.12, 0.5),
+)
 REGULARIZACION = 1e-4
+# Variables por eje: término independiente, cabeza, iris y la dirección de la
+# mirada que estima MediaPipe (blendshapes eyeLook*).
+NUM_VARIABLES = 4
 
 
-def rasgos_mirada(puntos) -> dict:
+def _media(puntos, indices):
+    return (sum(puntos[i][0] for i in indices) / len(indices),
+            sum(puntos[i][1] for i in indices) / len(indices))
+
+
+def mirada_blendshapes(blendshapes) -> tuple:
+    """Dirección de la mirada según MediaPipe (dict nombre → 0–1), o (0, 0).
+
+    x > 0 cuando ambos ojos miran hacia el mismo lado; el signo exacto lo
+    aprende la calibración, así que da igual que la imagen vaya en espejo.
+    """
+    if not blendshapes:
+        return 0.0, 0.0
+    b = blendshapes.get
+    x = ((b("eyeLookOutLeft", 0) - b("eyeLookInLeft", 0))
+         - (b("eyeLookOutRight", 0) - b("eyeLookInRight", 0))) / 2
+    y = ((b("eyeLookUpLeft", 0) + b("eyeLookUpRight", 0))
+         - (b("eyeLookDownLeft", 0) + b("eyeLookDownRight", 0))) / 2
+    return x, y
+
+
+def rasgos_mirada(puntos, blendshapes=None, apertura_habitual=None) -> dict:
     """puntos: 478 × (x_px, y_px). Las medidas se dividen por el tamaño de la
-    cara, así no cambian si la persona se acerca, se aleja o se corre de lado."""
+    cara, así no cambian si la persona se acerca, se aleja o se corre de lado.
+
+    El iris se mide respecto de las esquinas del ojo y no de los párpados: el
+    párpado superior acompaña a la mirada al subir y bajar, y anulaba la señal.
+    """
     centros, iris_x, iris_y, aperturas = [], [], [], []
     for a, b, sup, inf, iris in OJOS:
         ancho = _dist(puntos[a], puntos[b]) or 1.0
         cx = (puntos[a][0] + puntos[b][0]) / 2
         cy = (puntos[a][1] + puntos[b][1]) / 2
         centros.append((cx, cy))
-        iris_x.append((puntos[iris][0] - cx) / ancho)
-        iris_y.append((puntos[iris][1] - (puntos[sup][1] + puntos[inf][1]) / 2) / ancho)
+        ix, iy = _media(puntos, iris)  # 5 puntos: tiembla menos que solo el centro
+        iris_x.append((ix - cx) / ancho)
+        iris_y.append((iy - cy) / ancho)
         aperturas.append(_dist(puntos[sup], puntos[inf]) / ancho)
 
     entre_ojos = _dist(*centros) or 1.0
     medio = ((centros[0][0] + centros[1][0]) / 2, (centros[0][1] + centros[1][1]) / 2)
     nariz = puntos[PUNTA_NARIZ]
     apertura = sum(aperturas) / 2
+    umbral = apertura_habitual * FRACCION_PARPADEO if apertura_habitual else OJO_CERRADO
+    mirada_x, mirada_y = mirada_blendshapes(blendshapes)
     return {
         "cabeza_x": (nariz[0] - medio[0]) / entre_ojos,
         "cabeza_y": (nariz[1] - medio[1]) / entre_ojos,
         "iris_x": sum(iris_x) / 2,
         "iris_y": sum(iris_y) / 2,
+        "mirada_x": mirada_x,
+        "mirada_y": mirada_y,
         "apertura": apertura,
-        "ojos_abiertos": apertura >= OJO_CERRADO,
+        "ojos_abiertos": apertura >= umbral,
     }
 
 
 def _variables(rasgos, eje):
-    return [1.0, rasgos[f"cabeza_{eje}"], rasgos[f"iris_{eje}"]]
+    return [1.0, rasgos[f"cabeza_{eje}"], rasgos[f"iris_{eje}"], rasgos.get(f"mirada_{eje}", 0.0)]
 
 
 @dataclass
 class ModeloMirada:
-    """Regresión lineal por eje: pantalla = w0 + w1·cabeza + w2·iris."""
+    """Regresión lineal por eje: pantalla = w0 + w1·cabeza + w2·iris + w3·mirada."""
     wx: list
     wy: list
 
@@ -290,14 +334,17 @@ class ModeloMirada:
 
     @classmethod
     def desde_dict(cls, datos):
-        """Restaura un modelo enviado por el cliente (p. ej. tras reconectar)."""
-        wx, wy = datos["wx"], datos["wy"]
-        if len(wx) != 3 or len(wy) != 3:
-            raise ValueError("El modelo de mirada debe tener 3 pesos por eje.")
+        """Restaura un modelo enviado por el cliente (p. ej. tras reconectar).
+        Acepta también los de 3 pesos de la versión anterior (sin blendshapes)."""
+        wx, wy = list(datos["wx"]), list(datos["wy"])
+        if len(wx) != len(wy) or len(wx) not in (3, NUM_VARIABLES):
+            raise ValueError(f"El modelo de mirada debe tener {NUM_VARIABLES} pesos por eje.")
         pesos = [float(w) for w in (*wx, *wy)]
         if not all(math.isfinite(w) for w in pesos):
             raise ValueError("Pesos no válidos.")
-        return cls(pesos[:3], pesos[3:])
+        n = len(wx)
+        relleno = [0.0] * (NUM_VARIABLES - n)
+        return cls(pesos[:n] + relleno, pesos[n:] + relleno)
 
 
 # Coordinación con la cabeza (para quien no puede usar los brazos): el cursor
@@ -319,15 +366,26 @@ def ajustar_mirada(muestras) -> tuple:
 
     Mínimos cuadrados con una regularización pequeña (ridge): si la persona solo
     movió los ojos y no la cabeza, esa variable no aporta y su peso queda en ~0
-    en vez de dispararse. Devuelve (modelo, error medio en fracción de pantalla).
+    en vez de dispararse. Se ajusta dos veces: la segunda sin las muestras muy
+    alejadas (la persona miró a otro lado o se distrajo un momento).
+    Devuelve (modelo, error medio en fracción de pantalla).
     """
-    def resolver(eje, indice):
-        X = np.array([_variables(r, eje) for r, _ in muestras])
-        y = np.array([p[indice] for _, p in muestras])
-        penalizacion = np.eye(3) * REGULARIZACION * len(muestras)
+    def resolver(datos, eje, indice):
+        X = np.array([_variables(r, eje) for r, _ in datos])
+        y = np.array([p[indice] for _, p in datos])
+        penalizacion = np.eye(NUM_VARIABLES) * REGULARIZACION * len(datos)
         penalizacion[0, 0] = 0.0  # el término independiente no se penaliza
         return np.linalg.solve(X.T @ X + penalizacion, X.T @ y).tolist()
 
-    modelo = ModeloMirada(resolver("x", 0), resolver("y", 1))
-    errores = [math.hypot(*(np.subtract(modelo.mapear(r), p))) for r, p in muestras]
+    def ajustar(datos):
+        modelo = ModeloMirada(resolver(datos, "x", 0), resolver(datos, "y", 1))
+        errores = [math.hypot(*(np.subtract(modelo.mapear(r), p))) for r, p in muestras]
+        return modelo, errores
+
+    modelo, errores = ajustar(muestras)
+    limite = max(2.5 * float(np.median(errores)), 0.05)
+    buenas = [m for m, e in zip(muestras, errores) if e <= limite]
+    if NUM_VARIABLES * 3 <= len(buenas) < len(muestras):
+        modelo, _ = ajustar(buenas)
+        errores = [math.hypot(*(np.subtract(modelo.mapear(r), p))) for r, p in buenas]
     return modelo, float(np.mean(errores))

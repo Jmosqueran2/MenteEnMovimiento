@@ -87,6 +87,11 @@ export default function Configuracion() {
     comandos_voz: paciente?.comandos_voz || false,
   });
   const elegir = (campo, valor) => setDatos({ ...datos, [campo]: valor });
+  // Cambiar cómo se mueve el cursor apaga la voz extra: el micrófono solo se
+  // usa si el cuidador lo vuelve a activar a propósito (o si elige «La voz»).
+  const elegirPuntero = (valor) => {
+    if (valor !== datos.puntero) setDatos({ ...datos, puntero: valor, comandos_voz: false });
+  };
   const [voz, setVoz] = useState(() => leerAjuste("voz"));
   const [error, setError] = useState(null);
   const [aviso, mostrarAviso] = useAvisoFlotante();
@@ -148,13 +153,18 @@ export default function Configuracion() {
           <h2>Cómo se mueve</h2>
           <strong>Mover el cursor con</strong>
           <div className="segmentado" role="group" aria-label="Mover el cursor con">
-            <button type="button" aria-pressed={datos.puntero === "mano"} onClick={() => elegir("puntero", "mano")}>La mano</button>
-            <button type="button" aria-pressed={datos.puntero === "mirada"} onClick={() => elegir("puntero", "mirada")}>La mirada</button>
+            <button type="button" aria-pressed={datos.puntero === "mano"} onClick={() => elegirPuntero("mano")}>La mano</button>
+            <button type="button" aria-pressed={datos.puntero === "mirada"} onClick={() => elegirPuntero("mirada")}>La mirada</button>
+            <button type="button" aria-pressed={datos.puntero === "voz"} disabled={!vozDisponible()}
+                    onClick={() => elegirPuntero("voz")}>La voz</button>
           </div>
           <p className="texto-apoyo" style={{ fontSize: 16 }}>
-            {datos.puntero === "mirada"
-              ? "El cursor sigue hacia dónde mira la persona (cabeza y ojos), sin levantar las manos. Al empezar se le pide mirar 5 puntos."
-              : "El cursor sigue la palma de la mano. Si la persona se cansa de levantar el brazo, elige «La mirada»."}
+            {datos.puntero === "voz"
+              ? "La persona elige diciendo en voz alta la opción que quiere («memoria», «cuchara», «comenzar»). La cámara no se enciende y la actividad Coordinación no aparece, porque es un ejercicio de movimiento. Ojo: según el navegador, el audio puede procesarse en servidores de Google o Microsoft."
+              : datos.puntero === "mirada"
+                ? "El cursor sigue hacia dónde mira la persona (cabeza y ojos), sin levantar las manos. Al empezar se le pide mirar 9 puntos."
+                : "El cursor sigue la palma de la mano. Si la persona se cansa de levantar el brazo, elige «La mirada» o «La voz»."}
+            {!vozDisponible() && " «La voz» necesita Google Chrome o Microsoft Edge."}
           </p>
 
           <div className="campo">
@@ -167,8 +177,9 @@ export default function Configuracion() {
             {MOVILIDADES.find(([valor]) => valor === datos.movilidad)?.[2]}
           </p>
 
-          <strong>Elegir con la voz</strong>
-          <div className="segmentado" role="group" aria-label="Elegir con la voz">
+          {datos.puntero !== "voz" && (<>
+          <strong>Elegir también con la voz</strong>
+          <div className="segmentado" role="group" aria-label="Elegir también con la voz">
             {[true, false].map((valor) => (
               <button key={String(valor)} type="button" aria-pressed={datos.comandos_voz === valor}
                       disabled={valor && !vozDisponible()} onClick={() => elegir("comandos_voz", valor)}>
@@ -181,6 +192,7 @@ export default function Configuracion() {
               ? "La persona puede decir en voz alta la opción que quiere («cuchara», «comenzar», «pausa»). Ojo: según el navegador, el audio puede procesarse en servidores de Google o Microsoft; en ese caso ya no queda solo en este equipo."
               : "Este navegador no reconoce la voz. Usa Google Chrome o Microsoft Edge."}
           </p>
+          </>)}
 
           {error && <p className="error-texto">{error}</p>}
           <div>

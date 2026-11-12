@@ -8,7 +8,7 @@ con gestos frente a la cámara web.
 | API principal | Django + Django REST Framework + JWT | `backend/` |
 | Microservicio de visión | FastAPI + OpenCV + MediaPipe + YOLOv8-Pose | `vision_service/` |
 | Frontend | React + Vite | `frontend/` |
-| Nube | AWS EC2 + RDS PostgreSQL + S3 | `deploy/` *(fase 5)* |
+| Nube | AWS EC2 + RDS PostgreSQL + S3 (HTTPS con Caddy) | `deploy/` — ver [deploy/GUIA.md](deploy/GUIA.md) |
 
 ## Backend: puesta en marcha local
 
@@ -27,7 +27,7 @@ python manage.py createsuperuser  # opcional, para entrar a /admin
 python manage.py runserver
 ```
 
-`cargar_datos --demo` crea el banco de 72 preguntas, el usuario **cuidador**
+`cargar_datos --demo` crea el banco de 159 preguntas, el usuario **cuidador**
 (clave `MenteEnMovimiento2026`), a Rosa Pérez, 4 fotos de ejemplo de Mi Historia
 y 5 sesiones de ejemplo de la última semana.
 
@@ -149,9 +149,17 @@ cursor con → La mirada** el cursor sigue hacia dónde mira la persona.
 - Una cámara web común no ve el iris con precisión suficiente por sí solo, así
   que se combinan la orientación de la cabeza (estable) y la posición de los
   ojos (fina). Basta con mover solo los ojos, solo la cabeza o ambos.
-- En la pantalla 03 la persona mira 5 puntos (~10 s). Una regresión lineal
-  aprende su relación entre cabeza, ojos y pantalla. Si se cae la conexión, el
+- En la pantalla 03 la persona mira 9 puntos (~15 s). Una regresión lineal
+  aprende su relación entre cabeza, ojos y pantalla; se ajusta dos veces para
+  descartar los instantes en que miró a otro lado. Si se cae la conexión, el
   navegador reenvía la calibración y no hay que repetirla.
+- Además del iris se usan los *blendshapes* de MediaPipe (`eyeLook*`), una
+  estimación de la mirada más estable que el iris solo.
+- En modo mirada la cámara se pide en 720p y se envían frames de 960 px de
+  ancho con más calidad JPEG; con poca luz se realza el contraste (CLAHE) antes
+  de buscar la cara.
+- El parpadeo se detecta respecto de la apertura habitual de cada persona, así
+  quien tiene los párpados caídos no queda como "ojos cerrados" todo el tiempo.
 - Al parpadear el cursor se queda quieto, así no se pierde la permanencia.
 - En **Coordinación** se sigue usando la mano: el ejercicio es estirar los brazos.
 - Con la mirada se recomienda un tiempo de permanencia de 2 o 2,5 s.
@@ -171,7 +179,11 @@ así la acompañan en cualquier equipo. Se editan en **Configuración → Cómo 
 | `brazo_izquierdo` / `brazo_derecho` | La zona activa se corre hacia ese lado para no cruzar el cuerpo |
 | `cabeza` | En Coordinación el cursor sigue solo el giro de la cabeza (ejercicio de cuello); necesita `face_landmarker.task` |
 
-**Elegir con la voz** (apagado por defecto): la persona dice el nombre de la
+**Mover el cursor con → La voz** (`puntero = "voz"`): la persona elige solo
+hablando. La cámara no se enciende, no hay detección ni calibración, y la
+actividad Coordinación no aparece en el menú porque es un ejercicio de movimiento.
+
+**Elegir también con la voz** (apagado por defecto, con la mano o la mirada): la persona dice el nombre de la
 opción ("cuchara", "comenzar", "pausa") y se pulsa el elemento `data-elegible`
 cuyo texto coincide; `data-voz="sí, acepto"` agrega sinónimos. Si hay empate no
 se elige nada. Lo que dice la narración se ignora para no elegir solo. Usa el
@@ -184,6 +196,52 @@ Actividades deshabilitadas ocultas en el menú · tiempo de permanencia
 configurable · narración por voz · aviso de cambios sin guardar · "Actividades
 de hoy: X de 2 completadas" · texto mínimo de 24 px en las pantallas del adulto
 mayor · botón secundario más diferenciado.
+
+## Juegos de cada actividad
+
+Cada sesión tiene 8 ítems que mezclan los juegos de su actividad
+(`backend/sesiones/juegos.py`). El nivel cambia cuántos hay de cada juego y
+qué tan difícil es cada uno. El primer ítem siempre es de elegir una opción.
+
+| Actividad | Juego | Fácil | Medio | Difícil |
+|---|---|---|---|---|
+| Memoria | ¿Qué objeto va con esto? | 2 | 2 | 2 |
+| | Opuestos | 2 · 3 opciones sin relación | 2 · 4 del mismo tema | 2 · casi sinónimos |
+| | Clasifica en su grupo | 2 · Cocina/Baño | 2 · + Dormitorio | 1 · + Jardín |
+| | Secuencia de la vida diaria | 1 · 3 pasos | 1 · 4 pasos | 2 · 5 pasos |
+| | Parejas de Memoria | 1 · 3 pares iguales | 1 · 4 pares relacionados | 1 · 6 pares relacionados |
+| Atención | Encuentra la pareja igual | 3 | 2 | 2 · figuras muy parecidas |
+| | ¿Cuál NO pertenece? | 2 · de otro mundo | 2 · mismo tema | 2 · hay que pensar |
+| | Preguntas de categoría | 2 | 2 | 1 |
+| | Sigue la figura | 1 · 3 cartas, 2 cruces | 2 · 4 cartas, 4 cruces | 3 · 4 cartas, 6 cruces rápidos |
+| Coordinación | Preguntas en las esquinas | 5 | 4 | 4 |
+| | Alcanza y recuerda | 3 · se ve 5 s | 4 · se ve 3 s | 4 · recordar su pareja |
+| Mi Historia | ¿Qué momento es este? | 2 opciones | 3 | 4 |
+| | ¿Quién es? (señalar la foto) | 2 fotos | 3 | 4 |
+| | Encuentra la foto igual | 2 fotos | 3 | — |
+| | Ordena los recuerdos | 3 | 3 | 4 |
+
+- **Según cómo se mueve el cursor:** con *La voz* cada opción lleva un número
+  verde («di el tres»); en Encuentra la pareja igual, la foto igual y ¿Quién es?
+  el nombre se oculta y solo vale el número, porque decir «tortuga» resolvería
+  el juego sin mirar. En Parejas y Sigue la figura siempre se dice el número de
+  la carta. Con *La mirada*, Parejas usa como mucho 4 pares (cartas más grandes),
+  porque ese cursor es menos preciso que la mano.
+- **Cómo se responde:** la mayoría de los juegos son de elegir una opción.
+  Secuencia y Ordena los recuerdos se responden señalando en orden (`orden` en
+  `/responder/`), y Parejas informa cuántos errores hubo (`errores`).
+- **Parejas** siempre termina resuelta: dentro de los errores tolerados (4, 6 o
+  9) cuenta como acierto y, con más, como resuelta con ayuda. Es el único juego
+  cuyas cartas viajan al navegador, porque hay que poder destaparlas.
+- El tiempo de Parejas y de las secuencias se guarda por jugada, para que el
+  modelo de dificultad no confunda una partida larga con lentitud.
+- **Ordena los recuerdos** usa el año que el cuidador puede escribir al subir
+  cada foto o audio (opcional); aparece cuando al menos 2 recuerdos tienen
+  años distintos. Cada recuerdo sale como mucho dos veces por sesión.
+- Parejas, Sigue la figura, Alcanza y recuerda y los juegos de Mi Historia se
+  arman al vuelo con contenido que ya existe; Opuestos, Clasifica, ¿Cuál NO
+  pertenece? y Secuencia están en el banco (`actividades/banco.py`), que con
+  `cargar_datos` queda en 159 preguntas.
 
 ## Dificultad adaptativa con scikit-learn
 

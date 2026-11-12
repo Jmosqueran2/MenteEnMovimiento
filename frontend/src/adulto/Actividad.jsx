@@ -9,6 +9,8 @@ import { decimal, NOMBRE_NIVEL, ORDEN_NIVEL } from "../formato";
 import { useSesion } from "../sesion";
 import { callar, hablar, sonarAcierto, sonarReintento } from "../sonidos";
 import { useVision } from "../vision/ProveedorVision";
+import { formasDeNumero } from "../vision/voz";
+import { JuegoOrden, JuegoParejas, Memorizar, SigueFigura, TarjetaOpcion } from "./Juegos";
 
 const TITULOS = {
   memoria: "Ejercicio de memoria",
@@ -74,7 +76,13 @@ export default function Actividad() {
 
   useEffect(() => {
     if (fase === "pregunta" && pregunta) {
-      const estimulo = pregunta.estimulo?.texto ? ` ${pregunta.estimulo.texto}.` : "";
+      if (pregunta.juego === "alcanza_recuerda") {
+        const { enunciado_inicial: inicial, recordar } = pregunta.ajustes;
+        return hablar(`${inicial}: ${recordar.texto}.`);
+      }
+      // En Sigue la figura el enunciado ya nombra la figura.
+      const estimulo = pregunta.estimulo?.texto && pregunta.juego !== "sigue_figura"
+        ? ` ${pregunta.estimulo.texto}.` : "";
       hablar(`${pregunta.enunciado}${estimulo}`);
     }
   }, [fase, pregunta]);
@@ -86,7 +94,8 @@ export default function Actividad() {
       return copia;
     });
 
-  const elegir = async (opcion) => {
+  // respuesta: { opcion } | { orden } (secuencias) | { errores } (parejas)
+  const responder = async (respuesta) => {
     if (enviando.current || pausa) return;
     enviando.current = true;
     try {
@@ -94,15 +103,21 @@ export default function Actividad() {
         metodo: "POST",
         datos: {
           indice_pregunta: indice,
-          opcion,
+          ...respuesta,
           tiempo_ms: Math.round(performance.now() - inicioPregunta.current),
         },
       });
       setResultado(r);
-      if (r.correcta) {
+      if (r.completado) {
+        // Parejas siempre termina: con pocos errores es un acierto.
+        marcar(r.correcta ? "acierto" : "resuelta");
+        sonarAcierto();
+        hablar(r.correcta ? "¡Encontraste todas las parejas! Muy buena memoria." : "¡Encontraste todas las parejas! Muy bien.");
+        setFase("acierto");
+      } else if (r.correcta) {
         marcar(r.intento === 1 ? "acierto" : "resuelta");
         sonarAcierto();
-        hablar(`¡Muy bien! Elegiste ${r.opcion_elegida.texto}.`);
+        hablar(pregunta.modo === "orden" ? "¡Muy bien! Ese es el orden correcto." : `¡Muy bien! Elegiste ${r.opcion_elegida.texto}.`);
         setFase("acierto");
       } else if (r.puede_reintentar) {
         sonarReintento();
@@ -171,7 +186,15 @@ export default function Actividad() {
 
   return (
     <>
-      {fase === "pregunta" && <Pregunta {...comunes} onElegir={elegir} onPausa={() => setPausa(true)} />}
+      {fase === "pregunta" && (
+        <Pregunta
+          {...comunes}
+          onResponder={responder}
+          onPausa={() => setPausa(true)}
+          // El tiempo cuenta desde que se puede responder, no durante animaciones.
+          onListo={() => { inicioPregunta.current = performance.now(); }}
+        />
+      )}
       {fase === "acierto" && <Acierto {...comunes} onSiguiente={siguiente} />}
       {fase === "revelada" && <Acierto {...comunes} revelada onSiguiente={siguiente} />}
       {fase === "reintento" && <Reintento {...comunes} onReintentar={reintentar} />}
@@ -245,30 +268,88 @@ function Estimulo({ pregunta }) {
   );
 }
 
-function TarjetaOpcion({ opcion, ...props }) {
-  return (
-    <button type="button" className={`opcion ${opcion.emoji ? "" : "opcion-solo-texto"}`} {...props}>
-      {opcion.emoji && (
-        <span className="opcion-imagen" aria-hidden="true">
-          {opcion.emoji}
-        </span>
-      )}
-      {opcion.texto}
-    </button>
-  );
-}
+// Juegos en los que hay que encontrar algo con la vista: con la voz se elige
+// solo por número, porque decir el nombre los resolvería sin mirar.
+const JUEGOS_DE_MIRAR = new Set(["pareja_igual", "foto_igual", "quien_es"]);
 
-function Pregunta({ tipo, indice, total, marcas, pregunta, onElegir, onPausa }) {
+// Consigna de arriba para los juegos que no son "elige la respuesta".
+const CONSIGNAS = {
+  parejas: "Destapa dos cartas a la vez",
+  orden: "Señala los pasos en orden",
+  ordenar_recuerdos: "Señala los recuerdos en orden",
+  sigue_figura: "No le quites la vista",
+};
+
+function Pregunta({ tipo, indice, total, marcas, pregunta, onResponder, onPausa, onListo }) {
   const coordinacion = tipo === "coordinacion";
-  const { puntero, movilidad } = useVision();
-  const { paciente } = useSesion();
+  const { puntero, movilidad, conVoz } = useVision();
+  const soloVoz = puntero === "voz";
   const conMirada = puntero === "mirada" && !coordinacion;
   const conCabeza = coordinacion && movilidad === "cabeza";
-  const consigna = !coordinacion ? "Elige la respuesta"
-    : conCabeza ? "Gira la cabeza hacia la respuesta"
-    : movilidad === "brazo_izquierdo" ? "Estira el brazo izquierdo hacia la respuesta"
-    : movilidad === "brazo_derecho" ? "Estira el brazo derecho hacia la respuesta"
-    : "Estira el brazo hacia la respuesta";
+  const { juego, modo } = pregunta;
+  // Alcanza y recuerda: primero se memoriza el objeto, después aparecen las respuestas.
+  const [memorizando, setMemorizando] = useState(juego === "alcanza_recuerda");
+
+  useEffect(() => {
+    if (modo === "eleccion" && juego !== "sigue_figura" && !memorizando) onListo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memorizando]);
+
+  const terminarMemorizar = () => {
+    setMemorizando(false);
+    hablar(pregunta.enunciado);
+  };
+
+  const consigna = CONSIGNAS[juego] || CONSIGNAS[modo]
+    || (memorizando ? "Mira bien y recuérdalo"
+      : !coordinacion ? "Elige la respuesta"
+      : conCabeza ? "Gira la cabeza hacia la respuesta"
+      : movilidad === "brazo_izquierdo" ? "Estira el brazo izquierdo hacia la respuesta"
+      : movilidad === "brazo_derecho" ? "Estira el brazo derecho hacia la respuesta"
+      : "Estira el brazo hacia la respuesta");
+  const enunciado = memorizando ? pregunta.ajustes.enunciado_inicial : pregunta.enunciado;
+  const elegir = (i) => onResponder({ opcion: i });
+  const soloNumero = soloVoz && JUEGOS_DE_MIRAR.has(juego);
+
+  let contenido;
+  if (modo === "parejas") {
+    contenido = <JuegoParejas pregunta={pregunta} onTerminar={(errores) => onResponder({ errores })} onListo={onListo} />;
+  } else if (modo === "orden") {
+    contenido = <JuegoOrden pregunta={pregunta} onTerminar={(orden) => onResponder({ orden })} onListo={onListo} />;
+  } else if (juego === "sigue_figura") {
+    contenido = <SigueFigura pregunta={pregunta} onElegir={elegir} onListo={onListo} />;
+  } else if (memorizando) {
+    contenido = <Memorizar objeto={pregunta.ajustes.recordar} duracionMs={pregunta.ajustes.memorizar_ms} onFin={terminarMemorizar} />;
+  } else {
+    contenido = (
+      <div className={`opciones ${coordinacion ? "opciones-coordinacion" : ""} ${pregunta.opciones.length === 3 ? "opciones-tres" : ""}`}>
+        {pregunta.opciones.map((opcion, i) => (
+          <TarjetaOpcion
+            key={`${indice}-${i}`}
+            opcion={opcion}
+            className="elegible-tarjeta"
+            data-elegible=""
+            // Con la voz cada opción lleva número; en los juegos de mirar, solo vale el número.
+            numeroVoz={soloVoz ? i + 1 : null}
+            sinTexto={soloNumero}
+            data-voz={soloVoz && !soloNumero ? formasDeNumero(i + 1) : undefined}
+            data-voz-solo={soloNumero ? formasDeNumero(i + 1) : undefined}
+            onClick={() => elegir(i)}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const ayuda = soloVoz
+    ? (modo === "parejas" || juego === "sigue_figura" ? "Di el número de la carta."
+      : soloNumero ? "Busca el igual con la vista y di su número."
+      : modo === "orden" ? "Di los pasos en orden, uno por uno."
+      : "Di la respuesta o su número.")
+    : conMirada ? "Mira la opción y mantén la vista en ella."
+    : conCabeza ? "Apunta con la cabeza a la respuesta y quédate quieto un momento."
+    : "Mueve la mano hacia la opción y déjala quieta.";
+
   return (
     <PantallaAdulto
       lateral={
@@ -276,8 +357,8 @@ function Pregunta({ tipo, indice, total, marcas, pregunta, onElegir, onPausa }) 
           <p className="etiqueta" style={{ color: "var(--amarillo)" }}>{TITULOS[tipo]}</p>
           <Puntos total={total} marcas={marcas} actual={indice} />
           <p>Pregunta {indice + 1} de {total}</p>
-          <h1 className="pregunta">{pregunta.enunciado}</h1>
-          <Estimulo pregunta={pregunta} />
+          <h1 className="pregunta">{enunciado}</h1>
+          {juego !== "alcanza_recuerda" && <Estimulo pregunta={pregunta} />}
           <Boton variante="secundario" icono={Pause} onClick={onPausa} style={{ alignSelf: "flex-start" }} data-voz="parar, espera, descansar">
             Pausa
           </Boton>
@@ -285,29 +366,19 @@ function Pregunta({ tipo, indice, total, marcas, pregunta, onElegir, onPausa }) 
       }
     >
       <p className="etiqueta">{consigna}</p>
-      <div className={`opciones ${coordinacion ? "opciones-coordinacion" : ""}`}>
-        {pregunta.opciones.map((opcion, i) => (
-          <TarjetaOpcion
-            key={`${indice}-${i}`}
-            opcion={opcion}
-            className={`opcion elegible-tarjeta ${opcion.emoji ? "" : "opcion-solo-texto"}`}
-            data-elegible=""
-            onClick={() => onElegir(i)}
-          />
-        ))}
-      </div>
-      <p className="texto-apoyo">
-        {conMirada ? "Mira la respuesta y mantén la vista en ella."
-          : conCabeza ? "Apunta con la cabeza a la respuesta y quédate quieto un momento."
-          : "Mueve la mano hacia la respuesta y déjala quieta."}
-        {paciente.comandos_voz && " También puedes decirla en voz alta."}
-      </p>
+      {contenido}
+      {!memorizando && (
+        <p className="texto-apoyo">
+          {ayuda}
+          {conVoz && !soloVoz && " También puedes decirla en voz alta."}
+        </p>
+      )}
     </PantallaAdulto>
   );
 }
 
 /** Pantalla 06 (y la variante cuando se agotan los intentos). */
-function Acierto({ indice, total, marcas, resultado, menu, onSiguiente, revelada = false }) {
+function Acierto({ indice, total, marcas, pregunta, resultado, menu, onSiguiente, revelada = false }) {
   const aciertos = marcas.filter((m) => m === "acierto").length;
   const respondidas = marcas.filter(Boolean).length;
   const ultima = indice + 1 >= total;
@@ -321,7 +392,9 @@ function Acierto({ indice, total, marcas, resultado, menu, onSiguiente, revelada
             <IconoCirculo icono={revelada ? ArrowRight : Check} tono="amarillo" tamano={120} />
           </span>
           <h1>{revelada ? "Sigamos adelante" : "¡Muy bien!"}</h1>
-          <p>{revelada ? "La próxima te saldrá mejor." : `Elegiste: ${resultado.opcion_elegida.texto}.`}</p>
+          <p>{revelada ? "La próxima te saldrá mejor."
+            : resultado.completado || pregunta.modo === "orden" ? "Lo hiciste muy bien."
+            : `Elegiste: ${resultado.opcion_elegida.texto}.`}</p>
           <span className="pastilla"><Volume2 size={22} /> {revelada ? "Suena un tono suave" : "Suena un tono alegre"}</span>
         </div>
       }
@@ -333,7 +406,12 @@ function Acierto({ indice, total, marcas, resultado, menu, onSiguiente, revelada
       }
     >
       <p className="etiqueta">Pregunta {indice + 1} de {total}</p>
-      <h2 className="titulo">{revelada ? `La respuesta era: ${correcta.texto}` : "¡Respuesta correcta!"}</h2>
+      <h2 className="titulo">
+        {revelada ? (pregunta.modo === "orden" ? "Este era el orden" : `La respuesta era: ${correcta.texto}`)
+          : resultado.completado ? "¡Encontraste todas las parejas!"
+          : pregunta.modo === "orden" ? "¡Orden correcto!"
+          : "¡Respuesta correcta!"}
+      </h2>
       <div className="resultado">
         <TarjetaOpcion opcion={correcta} tabIndex={-1} />
         <div className="progreso-caja">

@@ -1,0 +1,4 @@
+# Los scripts y la configuración del servidor deben quedar con finales de línea de Linux.
+*.sh text eol=lf
+deploy/Caddyfile.plantilla text eol=lf
+deploy/*.env* text eol=lf

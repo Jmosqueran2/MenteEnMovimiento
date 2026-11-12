@@ -252,19 +252,262 @@ BANCO = {
 }
 
 
-def preguntas_del_banco():
-    """Genera diccionarios listos para Pregunta.objects.update_or_create."""
+# --- Juegos nuevos (mismo formato) --------------------------------------------
+# La dificultad cambia el contenido: en Fácil los distractores no se parecen a
+# la respuesta, en Medio son del mismo tema y en Difícil son casi sinónimos o
+# del mismo grupo; también suben las opciones o los pasos.
+
+OPUESTO = "¿Cuál es lo contrario?"
+LUGAR = "¿En qué lugar de la casa se usa?"
+NO_PERTENECE = "¿Cuál NO pertenece al grupo?"
+COCINA, BANO, DORMITORIO, JARDIN = ("Cocina", "🍳"), ("Baño", "🛁"), ("Dormitorio", "🛏️"), ("Jardín", "🏡")
+PISTA_LUGAR = {
+    "Cocina": "Se usa para cocinar o para comer.",
+    "Baño": "Se usa para asearse.",
+    "Dormitorio": "Se usa para dormir o descansar.",
+    "Jardín": "Está afuera de la casa, con las plantas.",
+}
+
+
+def _lugar(objeto, lugar, lugares):
+    """Clasifica: las opciones son los lugares del nivel, con el correcto primero."""
+    return (LUGAR, objeto, [lugar] + [l for l in lugares if l != lugar], PISTA_LUGAR[lugar[0]])
+
+
+_FACIL_LUGARES = [COCINA, BANO]
+_MEDIO_LUGARES = [COCINA, BANO, DORMITORIO]
+_DIFICIL_LUGARES = [COCINA, BANO, DORMITORIO, JARDIN]
+
+BANCO_JUEGOS = {
+    "opuestos": ("memoria", {
+        "facil": [  # 3 opciones, distractores sin relación
+            (OPUESTO, ("Día", "☀️"), [("Noche", "🌙"), ("Casa", "🏠"), ("Perro", "🐕")],
+             "Cuando se va el sol, llega la…"),
+            (OPUESTO, ("Frío", "🥶"), [("Caliente", "🔥"), ("Libro", "📖"), ("Zapato", "👞")],
+             "Como el fuego o una sopa recién servida."),
+            (OPUESTO, ("Grande", "🐘"), [("Pequeño", "🐭"), ("Árbol", "🌳"), ("Pan", "🍞")],
+             "Como un ratoncito."),
+            (OPUESTO, ("Arriba", "⬆️"), [("Abajo", "⬇️"), ("Taza", "☕"), ("Flor", "🌷")],
+             "Hacia el suelo."),
+            (OPUESTO, ("Abierto", "🔓"), [("Cerrado", "🔒"), ("Gato", "🐈"), ("Sol", "☀️")],
+             "Como una puerta con llave."),
+            (OPUESTO, ("Feliz", "😀"), [("Triste", "😢"), ("Uvas", "🍇"), ("Reloj", "⌚")],
+             "Cuando uno llora está…"),
+            (OPUESTO, ("Rápido", "🐇"), [("Lento", "🐢"), ("Llave", "🔑"), ("Pelota", "⚽")],
+             "Como camina una tortuga."),
+            (OPUESTO, ("Lleno", "🍽️"), [("Vacío", "⭕"), ("Lápiz", "✏️"), ("Vaca", "🐄")],
+             "Cuando no queda nada adentro."),
+        ],
+        "medio": [  # 4 opciones del mismo tema
+            (OPUESTO, ("Mojado", "💧"), [("Seco", ""), ("Frío", ""), ("Limpio", ""), ("Nuevo", "")],
+             "Como la ropa cuando ya pasó un día al sol."),
+            (OPUESTO, ("Entrar", "🚪"), [("Salir", ""), ("Abrir", ""), ("Subir", ""), ("Llegar", "")],
+             "Lo que hacemos al irnos de la casa."),
+            (OPUESTO, ("Joven", "👦"), [("Viejo", ""), ("Niño", ""), ("Alto", ""), ("Fuerte", "")],
+             "Como los abuelos."),
+            (OPUESTO, ("Limpio", "🧼"), [("Sucio", ""), ("Mojado", ""), ("Nuevo", ""), ("Bonito", "")],
+             "Como la ropa después de jugar en el barro."),
+            (OPUESTO, ("Subir", "⬆️"), [("Bajar", ""), ("Correr", ""), ("Saltar", ""), ("Entrar", "")],
+             "Lo que hacemos al ir por la escalera hacia abajo."),
+            (OPUESTO, ("Encender", "💡"), [("Apagar", ""), ("Brillar", ""), ("Mirar", ""), ("Abrir", "")],
+             "Lo que hacemos con la luz antes de dormir."),
+            (OPUESTO, ("Comprar", "🛒"), [("Vender", ""), ("Pagar", ""), ("Gastar", ""), ("Pedir", "")],
+             "Lo que hace el dueño de la tienda."),
+            (OPUESTO, ("Ganar", "🏆"), [("Perder", ""), ("Jugar", ""), ("Correr", ""), ("Empatar", "")],
+             "Lo que le pasa al otro equipo cuando uno gana."),
+        ],
+        "dificil": [  # distractores parecidos o sinónimos de la palabra
+            (OPUESTO, ("Generoso", "🎁"), [("Tacaño", ""), ("Amable", ""), ("Rico", ""), ("Bondadoso", "")],
+             "Alguien que no quiere compartir nada."),
+            (OPUESTO, ("Valiente", "🦁"), [("Cobarde", ""), ("Fuerte", ""), ("Atrevido", ""), ("Tranquilo", "")],
+             "Alguien que tiene miedo de todo."),
+            (OPUESTO, ("Antiguo", "🏛️"), [("Moderno", ""), ("Viejo", ""), ("Usado", ""), ("Lejano", "")],
+             "Algo hecho hace muy poco, a la moda."),
+            (OPUESTO, ("Temprano", "🌅"), [("Tarde", ""), ("Pronto", ""), ("Mañana", ""), ("Antes", "")],
+             "Cuando llegamos después de la hora."),
+            (OPUESTO, ("Recordar", "💭"), [("Olvidar", ""), ("Pensar", ""), ("Repetir", ""), ("Aprender", "")],
+             "Lo que pasa cuando algo se nos va de la mente."),
+            (OPUESTO, ("Aceptar", "👍"), [("Rechazar", ""), ("Recibir", ""), ("Aprobar", ""), ("Esperar", "")],
+             "Decir que no a lo que nos ofrecen."),
+            (OPUESTO, ("Ancho", "↔️"), [("Angosto", ""), ("Largo", ""), ("Grande", ""), ("Alto", "")],
+             "Como un callejón por donde casi no se pasa."),
+            (OPUESTO, ("Dulce", "🍬"), [("Amargo", ""), ("Rico", ""), ("Suave", ""), ("Caliente", "")],
+             "Como el café sin azúcar."),
+        ],
+    }),
+    "clasifica": ("memoria", {
+        "facil": [_lugar(o, l, _FACIL_LUGARES) for o, l in [
+            (("Cuchillo", "🔪"), COCINA), (("Olla", "🍲"), COCINA), (("Taza", "☕"), COCINA),
+            (("Tenedor", "🍴"), COCINA), (("Jabón", "🧼"), BANO), (("Papel higiénico", "🧻"), BANO),
+            (("Inodoro", "🚽"), BANO), (("Ducha", "🚿"), BANO),
+        ]],
+        "medio": [_lugar(o, l, _MEDIO_LUGARES) for o, l in [
+            (("Huevo", "🥚"), COCINA), (("Cuchara", "🥄"), COCINA), (("Olla", "🍲"), COCINA),
+            (("Esponja", "🧽"), BANO), (("Inodoro", "🚽"), BANO), (("Despertador", "⏰"), DORMITORIO),
+            (("Pantuflas", "🥿"), DORMITORIO), (("Osito de peluche", "🧸"), DORMITORIO),
+        ]],
+        "dificil": [_lugar(o, l, _DIFICIL_LUGARES) for o, l in [
+            (("Sal", "🧂"), COCINA), (("Cuchillo", "🔪"), COCINA), (("Esponja", "🧽"), BANO),
+            (("Papel higiénico", "🧻"), BANO), (("Osito de peluche", "🧸"), DORMITORIO),
+            (("Pantuflas", "🥿"), DORMITORIO), (("Flores", "🌷"), JARDIN), (("Hojas secas", "🍂"), JARDIN),
+        ]],
+    }),
+    "no_pertenece": ("atencion", {
+        "facil": [  # el que sobra es de otro mundo
+            (NO_PERTENECE, None, [("Martillo", "🔨"), ("Manzana", "🍎"), ("Plátano", "🍌"), ("Uvas", "🍇")],
+             "Los demás son frutas."),
+            (NO_PERTENECE, None, [("Zapato", "👞"), ("Perro", "🐕"), ("Gato", "🐈"), ("Vaca", "🐄")],
+             "Los demás son animales."),
+            (NO_PERTENECE, None, [("Carro", "🚗"), ("Rosa", "🌹"), ("Girasol", "🌻"), ("Tulipán", "🌷")],
+             "Los demás son flores."),
+            (NO_PERTENECE, None, [("Pelota", "⚽"), ("Cuchara", "🥄"), ("Tenedor", "🍴"), ("Cuchillo", "🔪")],
+             "Los demás sirven para comer."),
+            (NO_PERTENECE, None, [("Libro", "📖"), ("Sol", "☀️"), ("Luna", "🌙"), ("Estrella", "⭐")],
+             "Los demás están en el cielo."),
+            (NO_PERTENECE, None, [("Taza", "☕"), ("Bus", "🚌"), ("Bicicleta", "🚲"), ("Avión", "✈️")],
+             "Los demás sirven para viajar."),
+            (NO_PERTENECE, None, [("Llave", "🔑"), ("Camisa", "👕"), ("Pantalón", "👖"), ("Vestido", "👗")],
+             "Los demás son ropa."),
+            (NO_PERTENECE, None, [("Reloj", "⌚"), ("Pan", "🍞"), ("Queso", "🧀"), ("Leche", "🥛")],
+             "Los demás se comen o se beben."),
+        ],
+        "medio": [  # el que sobra es del mismo tema, pero de otro grupo
+            (NO_PERTENECE, None, [("Zanahoria", "🥕"), ("Manzana", "🍎"), ("Pera", "🍐"), ("Uvas", "🍇")],
+             "Los demás son frutas; esta es una verdura."),
+            (NO_PERTENECE, None, [("Pez", "🐟"), ("Perro", "🐕"), ("Gato", "🐈"), ("Caballo", "🐎")],
+             "Los demás caminan en cuatro patas."),
+            (NO_PERTENECE, None, [("Avión", "✈️"), ("Carro", "🚗"), ("Bus", "🚌"), ("Bicicleta", "🚲")],
+             "Los demás van por la calle."),
+            (NO_PERTENECE, None, [("Lápiz", "✏️"), ("Martillo", "🔨"), ("Llave inglesa", "🔧"), ("Hacha", "🪓")],
+             "Los demás son herramientas."),
+            (NO_PERTENECE, None, [("Gorra", "🧢"), ("Zapato", "👞"), ("Bota", "👢"), ("Sandalia", "👡")],
+             "Los demás se ponen en los pies."),
+            (NO_PERTENECE, None, [("Helado", "🍦"), ("Sopa", "🍲"), ("Café", "☕"), ("Té", "🍵")],
+             "Los demás se toman calientes."),
+            (NO_PERTENECE, None, [("Pájaro", "🐦"), ("Pez", "🐟"), ("Pulpo", "🐙"), ("Ballena", "🐋")],
+             "Los demás viven en el agua."),
+            (NO_PERTENECE, None, [("Guitarra", "🎸"), ("Fútbol", "⚽"), ("Básquet", "🏀"), ("Tenis", "🎾")],
+             "Los demás son deportes con pelota."),
+        ],
+        "dificil": [  # todos se parecen: hay que pensar qué tienen en común
+            (NO_PERTENECE, None, [("Pingüino", "🐧"), ("Águila", "🦅"), ("Paloma", "🕊️"), ("Loro", "🦜")],
+             "Todas son aves, pero las demás pueden volar."),
+            (NO_PERTENECE, None, [("Ballena", "🐋"), ("Tiburón", "🦈"), ("Pez", "🐟"), ("Pez globo", "🐡")],
+             "Los demás son peces; la ballena sale a respirar aire."),
+            (NO_PERTENECE, None, [("Limón", "🍋"), ("Fresa", "🍓"), ("Cereza", "🍒"), ("Tomate", "🍅")],
+             "Los demás son rojos."),
+            (NO_PERTENECE, None, [("Murciélago", "🦇"), ("Mariposa", "🦋"), ("Abeja", "🐝"), ("Mariquita", "🐞")],
+             "Los demás son insectos."),
+            (NO_PERTENECE, None, [("Reloj", "⌚"), ("Lápiz", "✏️"), ("Cuaderno", "📓"), ("Regla", "📏")],
+             "Los demás se usan para escribir en la escuela."),
+            (NO_PERTENECE, None, [("Bufanda", "🧣"), ("Gafas de sol", "🕶️"), ("Sombrilla", "⛱️"), ("Helado", "🍦")],
+             "Los demás se usan cuando hace calor."),
+            (NO_PERTENECE, None, [("Trompeta", "🎺"), ("Guitarra", "🎸"), ("Violín", "🎻"), ("Banjo", "🪕")],
+             "Los demás tienen cuerdas."),
+            (NO_PERTENECE, None, [("Tren", "🚆"), ("Barco", "🚢"), ("Velero", "⛵"), ("Canoa", "🛶")],
+             "Los demás van por el agua."),
+        ],
+    }),
+    # Secuencia: las opciones van en el orden correcto; el servidor las baraja.
+    "secuencia": ("memoria", {
+        "facil": [  # 3 pasos
+            ("Ordena los pasos: tomar agua", ("Tomar agua", "🥛"),
+             [("Abrir la llave", "🚰"), ("Llenar el vaso", "🥛"), ("Beber el agua", "😋")],
+             "Primero hay que sacar el agua de la llave."),
+            ("Ordena los pasos: comer un plátano", ("Comer un plátano", "🍌"),
+             [("Tomar el plátano", "🍌"), ("Pelarlo", "👐"), ("Comerlo", "😋")],
+             "Antes de comerlo hay que quitarle la cáscara."),
+            ("Ordena los pasos: enviar una carta", ("Enviar una carta", "✉️"),
+             [("Escribir la carta", "✍️"), ("Ponerla en el sobre", "✉️"), ("Llevarla al buzón", "📮")],
+             "Primero se escribe."),
+            ("Ordena los pasos: regar las plantas", ("Regar las plantas", "🌱"),
+             [("Llenar la regadera", "🚰"), ("Ir al jardín", "🌷"), ("Echar agua a las plantas", "💧")],
+             "Primero hay que tener agua."),
+            ("Ordena los pasos: ponerse los zapatos", ("Ponerse los zapatos", "👞"),
+             [("Ponerse las medias", "🧦"), ("Calzarse los zapatos", "👞"), ("Amarrar los cordones", "🎀")],
+             "Las medias van antes que los zapatos."),
+        ],
+        "medio": [  # 4 pasos
+            ("Ordena los pasos: lavarse los dientes", ("Lavarse los dientes", "🦷"),
+             [("Tomar el cepillo", ""), ("Poner la pasta", ""), ("Cepillarse los dientes", "😁"),
+              ("Enjuagarse la boca", "💧")],
+             "La pasta va sobre el cepillo antes de cepillarse."),
+            ("Ordena los pasos: preparar un café", ("Preparar un café", "☕"),
+             [("Hervir el agua", "🔥"), ("Poner el café en la taza", "☕"), ("Echar el agua caliente", "💧"),
+              ("Añadir azúcar y mezclar", "🥄")],
+             "Primero hay que calentar el agua."),
+            ("Ordena los pasos: lavarse las manos", ("Lavarse las manos", "🙌"),
+             [("Mojarse las manos", "💧"), ("Ponerse jabón", "🧼"), ("Frotarse las manos", "👐"),
+              ("Secarse con la toalla", "")],
+             "Al final uno se seca."),
+            ("Ordena los pasos: hacer una llamada", ("Hacer una llamada", "📞"),
+             [("Tomar el teléfono", "📱"), ("Marcar el número", "🔢"), ("Esperar que contesten", "⏳"),
+              ("Saludar", "👋")],
+             "Se saluda cuando la otra persona ya contestó."),
+            ("Ordena los pasos: freír un huevo", ("Freír un huevo", "🍳"),
+             [("Calentar la sartén", "🔥"), ("Poner aceite", ""), ("Romper el huevo", "🥚"),
+              ("Servirlo en el plato", "🍽️")],
+             "La sartén debe estar caliente antes de poner el huevo."),
+        ],
+        "dificil": [  # 5 pasos
+            ("Ordena los pasos: hacer una ensalada", ("Hacer una ensalada", "🥗"),
+             [("Lavar las verduras", "💧"), ("Picarlas", "🔪"), ("Ponerlas en un plato", "🍽️"),
+              ("Echar sal y limón", "🍋"), ("Mezclar y servir", "🥄")],
+             "Las verduras se lavan antes de picarlas."),
+            ("Ordena los pasos: bañarse", ("Bañarse", "🚿"),
+             [("Abrir la ducha", "🚿"), ("Mojarse el cuerpo", "💧"), ("Enjabonarse", "🧼"),
+              ("Quitarse el jabón", ""), ("Secarse con la toalla", "")],
+             "El jabón se pone con el cuerpo mojado."),
+            ("Ordena los pasos: ir de compras", ("Ir de compras", "🛒"),
+             [("Hacer la lista", "📝"), ("Ir a la tienda", "🚶"), ("Escoger los productos", "🛒"),
+              ("Pagar en la caja", "💵"), ("Volver a casa", "🏠")],
+             "Antes de salir se anota lo que falta."),
+            ("Ordena los pasos: sembrar una planta", ("Sembrar una planta", "🌱"),
+             [("Hacer un hueco en la tierra", "⛏️"), ("Poner la semilla", "🌰"), ("Taparla con tierra", "🤲"),
+              ("Regarla", "💧"), ("Esperar que crezca", "🌱")],
+             "La semilla va dentro del hueco."),
+            ("Ordena los pasos: cocinar arroz", ("Cocinar arroz", "🍚"),
+             [("Lavar el arroz", "💧"), ("Hervir el agua", "🔥"), ("Echar el arroz en la olla", "🍲"),
+              ("Tapar y esperar", "⏳"), ("Servir", "🍚")],
+             "El arroz se lava antes de cocinarlo."),
+        ],
+    }),
+}
+
+
+def _juego_de(tipo, enunciado):
+    """Juego de las preguntas del banco original."""
+    if tipo == "memoria":
+        return "asociacion"
+    if tipo == "atencion" and enunciado == IGUAL:
+        return "pareja_igual"
+    return "eleccion"
+
+
+def _todas():
     for tipo, niveles in BANCO.items():
         for nivel, preguntas in niveles.items():
-            for enunciado, estimulo, opciones, pista in preguntas:
-                texto, emoji = estimulo or ("", "")
-                yield {
-                    "tipo": tipo,
-                    "nivel": nivel,
-                    "enunciado": enunciado,
-                    "estimulo_texto": texto,
-                    "estimulo_emoji": emoji,
-                    "opciones": [{"texto": t, "emoji": e} for t, e in opciones],
-                    "respuesta_correcta": 0,
-                    "pista": pista,
-                }
+            for pregunta in preguntas:
+                yield tipo, _juego_de(tipo, pregunta[0]), nivel, pregunta
+    for juego, (tipo, niveles) in BANCO_JUEGOS.items():
+        for nivel, preguntas in niveles.items():
+            for pregunta in preguntas:
+                yield tipo, juego, nivel, pregunta
+
+
+def preguntas_del_banco():
+    """Genera diccionarios listos para Pregunta.objects.update_or_create."""
+    for tipo, juego, nivel, (enunciado, estimulo, opciones, pista) in _todas():
+        texto, emoji = estimulo or ("", "")
+        yield {
+            "tipo": tipo,
+            "juego": juego,
+            "nivel": nivel,
+            "enunciado": enunciado,
+            "estimulo_texto": texto,
+            "clave": opciones[0][0],
+            "estimulo_emoji": emoji,
+            "opciones": [{"texto": t, "emoji": e} for t, e in opciones],
+            "respuesta_correcta": 0,
+            "pista": pista,
+        }

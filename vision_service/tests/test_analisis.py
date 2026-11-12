@@ -108,7 +108,8 @@ def rostro(cabeza=(0.0, 0.0), iris=(0.0, 0.0), escala=1.0, desplazamiento=(0, 0)
         poner(b, cx + 10, 0)
         poner(sup, cx, -10 * apertura)
         poner(inf, cx, 10 * apertura)
-        poner(centro_iris, cx + iris[0] * 20, iris[1] * 20)
+        for i in centro_iris:  # centro + borde: todos en el mismo punto basta
+            poner(i, cx + iris[0] * 20, iris[1] * 20)
     poner(analisis.PUNTA_NARIZ, cabeza[0] * 60, 30 + cabeza[1] * 60)
     return puntos
 
@@ -126,6 +127,37 @@ def test_rasgos_mirada_no_dependen_de_la_distancia_ni_la_posicion():
 
 def test_parpadeo():
     assert analisis.rasgos_mirada(rostro(apertura=0.05))["ojos_abiertos"] is False
+
+
+def test_parpadeo_con_parpados_caidos():
+    """Con la apertura habitual medida, un ojo poco abierto pero normal para
+    esa persona no cuenta como parpadeo; cerrarlo más sí."""
+    habitual = 0.07  # por debajo del umbral fijo
+    assert analisis.rasgos_mirada(rostro(apertura=0.07), apertura_habitual=habitual)["ojos_abiertos"] is True
+    assert analisis.rasgos_mirada(rostro(apertura=0.02), apertura_habitual=habitual)["ojos_abiertos"] is False
+
+
+def test_mirada_blendshapes():
+    assert analisis.mirada_blendshapes(None) == (0.0, 0.0)
+    # Ambos ojos hacia el mismo lado y hacia arriba.
+    x, y = analisis.mirada_blendshapes({"eyeLookOutLeft": 0.6, "eyeLookInRight": 0.6,
+                                        "eyeLookUpLeft": 0.4, "eyeLookUpRight": 0.4})
+    assert x == pytest.approx(0.6)
+    assert y == pytest.approx(0.4)
+
+
+def test_ajuste_mirada_descarta_distracciones():
+    """Algunas muestras mirando a otro lado no deben arruinar la calibración."""
+    azar = random.Random(5)
+    muestras = []
+    for px, py in analisis.PUNTOS_CALIBRACION_MIRADA:
+        for k in range(12):
+            iris = ((px - 0.5) * 0.3, (py - 0.5) * 0.2)
+            if k == 0:  # se distrajo: mira a cualquier parte
+                iris = (azar.uniform(-0.15, 0.15), azar.uniform(-0.1, 0.1))
+            muestras.append((analisis.rasgos_mirada(rostro((0.0, 0.0), iris)), (px, py)))
+    modelo, error = analisis.ajustar_mirada(muestras)
+    assert error < 0.02
 
 
 def test_ajuste_mirada_aprende_la_relacion():
@@ -156,8 +188,11 @@ def test_ajuste_mirada_solo_con_los_ojos():
 
 
 def test_modelo_mirada_desde_dict():
-    modelo = analisis.ModeloMirada([0.5, 1.0, 2.0], [0.5, 1.0, 2.0])
+    modelo = analisis.ModeloMirada([0.5, 1.0, 2.0, 0.3], [0.5, 1.0, 2.0, 0.3])
     assert analisis.ModeloMirada.desde_dict(modelo.como_dict()) == modelo
+    # Los de la versión anterior (3 pesos) se completan con 0.
+    antiguo = analisis.ModeloMirada.desde_dict({"wx": [0.5, 1, 2], "wy": [0.5, 1, 2]})
+    assert antiguo.wx == [0.5, 1.0, 2.0, 0.0]
     with pytest.raises(ValueError):
         analisis.ModeloMirada.desde_dict({"wx": [1, 2], "wy": [1, 2, 3]})
     with pytest.raises(ValueError):

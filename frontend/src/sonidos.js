@@ -43,16 +43,34 @@ export function hablar(texto) {
   frase.rate = 0.9;
   const voz = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("es"));
   if (voz) frase.voice = voz;
-  ultimaNarracion = { texto, fin: Infinity };
+  ultimaNarracion = { texto, fin: Infinity, frase };
   frase.onend = frase.onerror = () => { ultimaNarracion.fin = performance.now(); };
   window.speechSynthesis.speak(frase);
 }
 
+// Una frase de 2 palabras o más que coincide con la narración es eco: los
+// parlantes se cuelan en el micrófono y se oye la oración entera o un trozo.
+// Una sola palabra no: la narración dice "di «comenzar»" y la persona
+// responde justamente "comenzar"; descartarla dejaba la voz sin hacer caso.
+const PALABRAS_ECO = 2;
+const ECO_MS = 3000;
+
 /** ¿Lo que se oyó es la propia narración (sonando o recién terminada)? */
 export function esEco(oido, normalizar) {
-  if ("speechSynthesis" in window && window.speechSynthesis.speaking) return true;
-  const reciente = performance.now() - ultimaNarracion.fin < 3000;
-  return reciente && normalizar(ultimaNarracion.texto).includes(normalizar(oido));
+  const hablando = "speechSynthesis" in window && window.speechSynthesis.speaking;
+  // Chrome a veces no dispara onend: si ya no habla, se da por terminada ahora.
+  if (!hablando && ultimaNarracion.fin === Infinity) ultimaNarracion.fin = performance.now();
+  if (!hablando && performance.now() - ultimaNarracion.fin >= ECO_MS) return false;
+  const frase = normalizar(oido);
+  if (!frase || frase.split(" ").length < PALABRAS_ECO) return false;
+  return ` ${normalizar(ultimaNarracion.texto)} `.includes(` ${frase} `);
+}
+
+/** ¿La narración está hablando o acaba de terminar? (su eco puede seguir llegando) */
+export function narrando() {
+  const hablando = "speechSynthesis" in window && window.speechSynthesis.speaking;
+  if (!hablando && ultimaNarracion.fin === Infinity) ultimaNarracion.fin = performance.now();
+  return hablando || performance.now() - ultimaNarracion.fin < 500;
 }
 
 export const callar = () => "speechSynthesis" in window && window.speechSynthesis.cancel();

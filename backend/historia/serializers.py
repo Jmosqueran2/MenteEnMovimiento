@@ -14,7 +14,7 @@ class ContenidoHistoriaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ContenidoHistoria
-        fields = ["id", "paciente", "titulo", "pista", "tipo", "archivo", "nombre_original", "url",
+        fields = ["id", "paciente", "titulo", "pista", "anio", "tipo", "archivo", "nombre_original", "url",
                   "creado"]
         read_only_fields = ["tipo", "nombre_original", "creado"]
         extra_kwargs = {"archivo": {"write_only": True}}
@@ -28,6 +28,11 @@ class ContenidoHistoriaSerializer(serializers.ModelSerializer):
 
     def get_url(self, contenido):
         return contenido.archivo.url if contenido.archivo else None
+
+    def validate_anio(self, anio):
+        if anio is not None and not 1900 <= anio <= 2100:
+            raise serializers.ValidationError("Escribe un año entre 1900 y 2100.")
+        return anio
 
     def validate_archivo(self, archivo):
         self._tipo = validar_archivo(archivo)

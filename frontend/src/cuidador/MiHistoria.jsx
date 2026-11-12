@@ -20,6 +20,7 @@ export default function MiHistoria() {
   const [vistaPrevia, setVistaPrevia] = useState(null);
   const [titulo, setTitulo] = useState("");
   const [pista, setPista] = useState("");
+  const [anio, setAnio] = useState("");
   const [errorArchivo, setErrorArchivo] = useState(null);
   const [error, setError] = useState(null);
   const [arrastrando, setArrastrando] = useState(false);
@@ -55,6 +56,7 @@ export default function MiHistoria() {
     setVistaPrevia(null);
     setTitulo("");
     setPista("");
+    setAnio("");
     setErrorArchivo(null);
     setError(null);
     setGuardado(null);
@@ -67,6 +69,7 @@ export default function MiHistoria() {
     formulario.append("paciente", paciente.id);
     formulario.append("titulo", titulo.trim());
     formulario.append("pista", pista.trim());
+    if (anio.trim()) formulario.append("anio", anio.trim());
     formulario.append("archivo", archivo);
     setEnviando(true);
     try {
@@ -74,7 +77,9 @@ export default function MiHistoria() {
       setGuardado(nuevo);
       cargar();
     } catch (e) {
-      if (e instanceof ErrorApi && e.datos?.archivo) {
+      if (e instanceof ErrorApi && e.datos?.anio) {
+        setError(e.datos.anio[0]);
+      } else if (e instanceof ErrorApi && e.datos?.archivo) {
         setErrorArchivo({ nombre: archivo.name, mensaje: e.datos.archivo[0] });
         setArchivo(null);
         setVistaPrevia(null);
@@ -132,6 +137,7 @@ export default function MiHistoria() {
               <div style={{ display: "grid", gap: 6 }}>
                 <strong style={{ fontSize: 22 }}>{guardado.titulo}</strong>
                 {guardado.pista && <span className="texto-apoyo">Pista: {guardado.pista}</span>}
+                {guardado.anio && <span className="texto-apoyo">Año: {guardado.anio}</span>}
                 <span className="chip chip-verde" style={{ fontSize: 15, justifySelf: "start" }}>
                   Se agregó a la actividad Mi Historia
                 </span>
@@ -219,6 +225,14 @@ export default function MiHistoria() {
             <label htmlFor="pista">Pista para la actividad</label>
             <input id="pista" value={pista} disabled={conError} placeholder="¿Quién está a tu lado?" maxLength={200}
                    onChange={(e) => setPista(e.target.value)} />
+          </div>
+          <div className="campo">
+            <label htmlFor="anio">Año del recuerdo (opcional)</label>
+            <input id="anio" value={anio} disabled={conError} placeholder="1975" inputMode="numeric" maxLength={4}
+                   onChange={(e) => setAnio(e.target.value.replace(/\D/g, ""))} />
+            <span className="texto-apoyo" style={{ fontSize: 15 }}>
+              Con el año de al menos 2 recuerdos aparece el juego «Ordena los recuerdos».
+            </span>
           </div>
           {error && <p className="error-texto">{error}</p>}
         </div>

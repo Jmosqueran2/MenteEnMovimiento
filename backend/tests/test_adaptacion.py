@@ -13,6 +13,7 @@ from adaptacion.reglas import aplicar_limites
 from pacientes.models import AdultoMayor
 from sesiones import servicios
 from sesiones.models import Sesion
+from tests.test_api import respuesta_correcta, respuesta_incorrecta
 
 CARPETA = tempfile.mkdtemp()
 RUTA_MODELO = str(Path(CARPETA) / "dificultad.joblib")
@@ -78,8 +79,8 @@ class ModeloTest(TestCase):
     def _jugar(self, correctas):
         sesion = servicios.iniciar_sesion(self.rosa, "memoria")
         for indice, item in enumerate(sesion.plan):
-            opcion = item["correcta"] if indice < correctas else (item["correcta"] + 1) % len(item["opciones"])
-            servicios.registrar_respuesta(sesion, indice, opcion, 3000)
+            respuesta = respuesta_correcta(item) if indice < correctas else respuesta_incorrecta(item)
+            servicios.registrar_respuesta(sesion, indice, 3000, **respuesta)
         return servicios.finalizar_sesion(Sesion.objects.get(pk=sesion.pk))
 
     def test_finalizar_usa_el_modelo(self):
@@ -108,7 +109,7 @@ class SinModeloTest(TestCase):
         call_command("cargar_datos", stdout=StringIO())
         sesion = servicios.iniciar_sesion(rosa, "memoria")
         for indice, item in enumerate(sesion.plan):
-            servicios.registrar_respuesta(sesion, indice, item["correcta"], 2000)
+            servicios.registrar_respuesta(sesion, indice, 2000, **respuesta_correcta(item))
         resumen = servicios.finalizar_sesion(Sesion.objects.get(pk=sesion.pk))
         self.assertEqual(resumen["ajuste"]["metodo"], "reglas")
         self.assertEqual(resumen["nivel_siguiente"], "medio")

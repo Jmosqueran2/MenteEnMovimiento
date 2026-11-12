@@ -47,9 +47,19 @@ class IniciarSesionSerializer(serializers.Serializer):
 
 
 class ResponderSerializer(serializers.Serializer):
+    """Según el juego se manda una opción, un orden (secuencias) o los errores (parejas)."""
+
     indice_pregunta = serializers.IntegerField(min_value=0)
-    opcion = serializers.IntegerField(min_value=0)
+    opcion = serializers.IntegerField(min_value=0, required=False)
+    orden = serializers.ListField(child=serializers.IntegerField(min_value=0), required=False,
+                                  max_length=10)
+    errores = serializers.IntegerField(min_value=0, max_value=500, required=False)
     tiempo_ms = serializers.IntegerField(min_value=0, max_value=30 * 60 * 1000)
+
+    def validate(self, datos):
+        if not any(campo in datos for campo in ("opcion", "orden", "errores")):
+            raise serializers.ValidationError("Falta la respuesta: opcion, orden o errores.")
+        return datos
 
 
 class FinalizarSerializer(serializers.Serializer):

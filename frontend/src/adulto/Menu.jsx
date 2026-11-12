@@ -9,9 +9,9 @@ import { hablar } from "../sonidos";
 import { useVision } from "../vision/ProveedorVision";
 
 export const ACTIVIDADES = [
-  { tipo: "memoria", titulo: "Memoria", descripcion: "Empareja imágenes de la vida diaria", icono: Copy },
-  { tipo: "atencion", titulo: "Atención", descripcion: "Encuentra la figura correcta", icono: CircleDot },
-  { tipo: "coordinacion", titulo: "Coordinación", descripcion: "Estira los brazos para responder", icono: PersonStanding },
+  { tipo: "memoria", titulo: "Memoria", descripcion: "Parejas, opuestos y pasos del día", icono: Copy },
+  { tipo: "atencion", titulo: "Atención", descripcion: "Encuentra, compara y sigue figuras", icono: CircleDot },
+  { tipo: "coordinacion", titulo: "Coordinación", descripcion: "Estira los brazos y recuerda", icono: PersonStanding },
   { tipo: "historia", titulo: "Mi Historia", descripcion: "Recuerda con tus fotos familiares", icono: Image },
 ];
 
@@ -30,11 +30,14 @@ export default function Menu() {
   const navegar = useNavigate();
   const { paciente, recargar } = useSesion();
   const [hechasHoy, setHechasHoy] = useState(0);
-  const { puntero, movilidad } = useVision();
-  const indicacion = (puntero === "mirada"
-    ? "Mira una actividad un momento."
-    : "Mueve la mano hacia una actividad y déjala quieta un momento.")
-    + (paciente.comandos_voz ? " O di su nombre." : "");
+  const { puntero, movilidad, conVoz } = useVision();
+  const soloVoz = puntero === "voz";
+  const indicacion = soloVoz
+    ? "Di el nombre de una actividad."
+    : (puntero === "mirada"
+      ? "Mira una actividad un momento."
+      : "Mueve la mano hacia una actividad y déjala quieta un momento.")
+      + (conVoz ? " O di su nombre." : "");
 
   useEffect(() => {
     recargar(); // el nivel pudo cambiar al terminar la sesión anterior
@@ -49,7 +52,9 @@ export default function Menu() {
   }, [paciente.id]);
 
   // Ajuste de la prueba de usabilidad: lo deshabilitado por el cuidador no aparece.
-  const disponibles = ACTIVIDADES.filter((a) => paciente.actividades_habilitadas.includes(a.tipo));
+  // Coordinación es un ejercicio de movimiento con la cámara: no se ofrece con "La voz".
+  const disponibles = ACTIVIDADES.filter((a) => paciente.actividades_habilitadas.includes(a.tipo)
+    && !(soloVoz && a.tipo === "coordinacion"));
 
   return (
     <PantallaAdulto

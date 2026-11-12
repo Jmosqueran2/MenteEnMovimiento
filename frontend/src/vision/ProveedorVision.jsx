@@ -12,13 +12,17 @@ import { useSesion } from "../sesion";
 
 const ContextoVision = createContext(null);
 const ANCHO_FRAME = 320;
-// Con la mirada se manda más resolución: el iris mide pocos píxeles.
-const ANCHO_FRAME_MIRADA = 640;
+// Con la mirada se manda más resolución y mejor calidad: el iris mide pocos
+// píxeles y la compresión JPEG borra su borde.
+const ANCHO_FRAME_MIRADA = 960;
 const CALIDAD_JPEG = 0.7;
+const CALIDAD_JPEG_MIRADA = 0.85;
 const REINTENTO_CAMARA_MS = 3000;
 const REINTENTO_WS_MS = 2000;
 const FRAME_PERDIDO_MS = 3000;
-const RESTRICCIONES = { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }, audio: false };
+// Se pide 720p: con la mano se reduce a 320 px igual, pero a la mirada le sirve
+// cada píxel. Si la cámara no llega, el navegador da la mayor que tenga.
+const RESTRICCIONES = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }, audio: false };
 
 export function ProveedorVision({ children }) {
   const [control, setControlEstado] = useState(() => leerAjuste("control"));
@@ -27,6 +31,9 @@ export function ProveedorVision({ children }) {
   const { paciente } = useSesion();
   const puntero = paciente?.puntero || "mano";
   const movilidad = paciente?.movilidad || "completa";
+  // Con "La voz" la persona elige hablando y la cámara no se enciende.
+  const soloVoz = puntero === "voz";
+  const usaCamara = control === "camara" && !soloVoz;
   // apagada | solicitando | activa | denegada | desconectada
   const [camara, setCamara] = useState("apagada");
   // cerrada | conectando | abierta
@@ -42,7 +49,7 @@ export function ProveedorVision({ children }) {
     puntero: "mano",
     movilidad: "completa",
     // Calibración de la mirada de esta visita: se reenvía si se reconecta el
-    // WebSocket, para no tener que volver a mirar los 5 puntos.
+    // WebSocket, para no tener que volver a mirar los 9 puntos.
     modeloMirada: null,
     enVuelo: false,
     enviadoEn: 0,
@@ -64,8 +71,11 @@ export function ProveedorVision({ children }) {
       r.temporizadores.frame = setTimeout(enviarFrame, 100);
       return;
     }
-    lienzo.width = r.puntero === "mirada" ? ANCHO_FRAME_MIRADA : ANCHO_FRAME;
-    lienzo.height = Math.round((ANCHO_FRAME * video.videoHeight) / video.videoWidth);
+    const conMirada = r.puntero === "mirada";
+    // Nunca más ancho que la cámara: agrandar no agrega detalle.
+    lienzo.width = Math.min(conMirada ? ANCHO_FRAME_MIRADA : ANCHO_FRAME, video.videoWidth);
+    // El alto sale del ancho real del lienzo; si no, la cara llega estirada.
+    lienzo.height = Math.round((lienzo.width * video.videoHeight) / video.videoWidth);
     lienzo.getContext("2d").drawImage(video, 0, 0, lienzo.width, lienzo.height);
     r.enVuelo = true;
     r.enviadoEn = performance.now();
@@ -75,7 +85,7 @@ export function ProveedorVision({ children }) {
         else r.enVuelo = false;
       },
       "image/jpeg",
-      CALIDAD_JPEG,
+      conMirada ? CALIDAD_JPEG_MIRADA : CALIDAD_JPEG,
     );
   }, [r]);
 
@@ -159,13 +169,26 @@ export function ProveedorVision({ children }) {
     r.temporizadores.camara = setTimeout(() => r.activo && pedirCamara(), REINTENTO_CAMARA_MS);
   }
 
+  // Con "La voz" el permiso que importa es el del micrófono: se pide aquí, en la
+  // pantalla de privacidad, y no por sorpresa cuando empieza a escuchar.
+  const pedirMicrofono = useCallback(async () => {
+    try {
+      const prueba = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      prueba.getTracks().forEach((pista) => pista.stop()); // solo era para el permiso
+      return "activa";
+    } catch (error) {
+      return error.name === "NotAllowedError" || error.name === "SecurityError" ? "denegada" : "sin_microfono";
+    }
+  }, []);
+
   const encender = useCallback(async () => {
-    if (control === "mouse") return "activa";
+    if (soloVoz) return pedirMicrofono();
+    if (!usaCamara) return "activa";
     if (r.activo && r.stream) return "activa";
     r.activo = true;
     setCamara("solicitando");
     return pedirCamara();
-  }, [control, r, pedirCamara]);
+  }, [soloVoz, usaCamara, r, pedirCamara, pedirMicrofono]);
 
   const apagar = useCallback(() => {
     r.activo = false;
@@ -207,13 +230,19 @@ export function ProveedorVision({ children }) {
     enviarControl({ accion: "calibrar" });
   }, [r, enviarControl]);
 
+  // Si el cuidador cambia a "La voz" con la cámara encendida, se apaga.
   useEffect(() => {
+    if (soloVoz && r.activo) apagar();
+  }, [soloVoz, r, apagar]);
+
+  useEffect(() => {
+    if (soloVoz) return;
     if (r.puntero === puntero && r.movilidad === movilidad) return;
     if (r.puntero !== puntero) r.modeloMirada = null; // otra persona u otro puntero
     r.puntero = puntero;
     r.movilidad = movilidad;
     enviarControl({ accion: "config", puntero, movilidad });
-  }, [r, puntero, movilidad, enviarControl]);
+  }, [r, puntero, movilidad, soloVoz, enviarControl]);
 
   const setControl = useCallback(
     (nuevo) => {
@@ -241,7 +270,11 @@ export function ProveedorVision({ children }) {
     control,
     setControl,
     // Con el mouse no hay mirada: así las pantallas solo preguntan por "mirada".
-    puntero: control === "camara" ? puntero : "mano",
+    puntero: soloVoz ? "voz" : control === "camara" ? puntero : "mano",
+    // Si la cámara participa (no con el mouse de pruebas ni con "La voz").
+    usaCamara,
+    // Elegir diciendo la opción: siempre con "La voz", o como ayuda extra.
+    conVoz: soloVoz || Boolean(paciente?.comandos_voz),
     movilidad,
     camara,
     conexion,

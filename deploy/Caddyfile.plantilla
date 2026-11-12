@@ -1,0 +1,33 @@
+# Caddy: HTTPS automático (Let's Encrypt) y un solo origen para todo, igual
+# que el proxy de Vite en desarrollo. instalar.sh reemplaza {DOMINIO} y {RAIZ}.
+{DOMINIO} {
+	encode gzip
+
+	# API y panel de administración de Django
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle /admin* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	# Archivos estáticos del admin (collectstatic)
+	handle_path /static/* {
+		root * {RAIZ}/backend/staticfiles
+		file_server
+	}
+	# Mi Historia sin bucket S3 (con S3 las fotos se piden directo a AWS)
+	handle_path /media/* {
+		root * {RAIZ}/backend/media
+		file_server
+	}
+	# Cámara → microservicio de visión (WebSocket)
+	handle /ws/* {
+		reverse_proxy 127.0.0.1:8001
+	}
+	# Aplicación React: cualquier otra ruta devuelve index.html
+	handle {
+		root * {RAIZ}/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

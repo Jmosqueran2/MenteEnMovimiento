@@ -22,11 +22,12 @@ SESIONES_DEMO = [
     (1, "historia", 6),
     (0, "memoria", 7),
 ]
+# (título, pista, color, año): el año permite "Ordena los recuerdos".
 HISTORIA_DEMO = [
-    ("Boda 1975", "¿Quién está a tu lado en esta foto?", "#038666"),
-    ("Su casa", "¿Dónde viviste muchos años?", "#1B4322"),
-    ("Nieta Sofía", "Te visita los domingos.", "#E8913A"),
-    ("Cumpleaños 70", "Toda la familia vino a celebrar.", "#FBB02D"),
+    ("Boda 1975", "¿Quién está a tu lado en esta foto?", "#038666", 1975),
+    ("Su casa", "¿Dónde viviste muchos años?", "#1B4322", 1982),
+    ("Cumpleaños 70", "Toda la familia vino a celebrar.", "#FBB02D", 2018),
+    ("Nieta Sofía", "Te visita los domingos.", "#E8913A", 2020),
 ]
 
 
@@ -51,7 +52,7 @@ class Command(BaseCommand):
     def handle(self, *args, **opciones):
         creadas = 0
         for datos in preguntas_del_banco():
-            claves = {k: datos.pop(k) for k in ("tipo", "nivel", "enunciado", "estimulo_texto")}
+            claves = {k: datos.pop(k) for k in ("tipo", "juego", "nivel", "enunciado", "estimulo_texto", "clave")}
             _, nueva = Pregunta.objects.update_or_create(**claves, defaults=datos)
             creadas += nueva
         self.stdout.write(f"Banco de preguntas: {Pregunta.objects.count()} ({creadas} nuevas).")
@@ -78,8 +79,8 @@ class Command(BaseCommand):
             self.stdout.write("La demo ya existía; no se duplicó.")
             return
 
-        for titulo, pista, color in HISTORIA_DEMO:
-            contenido = ContenidoHistoria(paciente=rosa, titulo=titulo, pista=pista,
+        for titulo, pista, color, anio in HISTORIA_DEMO:
+            contenido = ContenidoHistoria(paciente=rosa, titulo=titulo, pista=pista, anio=anio,
                                           tipo=TipoContenido.IMAGEN, nombre_original=f"{titulo}.png")
             contenido.archivo.save(f"{titulo}.png", _imagen_demo(titulo, color), save=True)
 

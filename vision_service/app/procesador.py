@@ -5,6 +5,7 @@ Nunca se escribe en disco ni se reenvía; al cliente solo vuelven números.
 """
 
 import time
+from collections import deque
 from statistics import median
 
 import cv2
@@ -23,6 +24,13 @@ ESPERA_POR_PUNTO = 8
 MUESTRAS_POR_PUNTO = 12
 # Coordinación con la cabeza: frames mirando al frente para fijar la posición neutra.
 MUESTRAS_NEUTRO_CABEZA = 10
+# Apertura habitual de los ojos: percentil alto de los últimos frames (los
+# parpadeos son cortos y quedan por debajo). Se mide en cada persona porque con
+# párpados caídos el ojo abierto ya se ve "medio cerrado".
+FRAMES_APERTURA = 90
+MINIMO_APERTURA = 15
+# Con poca luz se realza el contraste solo para buscar la cara (CLAHE).
+LUZ_REALCE = 100
 
 
 class ProcesadorSesion:
@@ -49,6 +57,8 @@ class ProcesadorSesion:
         self.calibracion_mirada = {"estado": "pendiente", "progreso": 0.0}
         self._muestras_mirada = []
         self._ultimo_cursor_mirada = None
+        self._aperturas = deque(maxlen=FRAMES_APERTURA)
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         self._neutro_cabeza = None
         self._muestras_neutro = []
 
@@ -145,6 +155,7 @@ class ProcesadorSesion:
         self._frames_en_punto = 0
         self._muestras_punto = 0
         self.calibracion_mirada = {"estado": "en_progreso", "progreso": 0.0, "indice": 0,
+                                   "total": len(analisis.PUNTOS_CALIBRACION_MIRADA),
                                    "punto": list(analisis.PUNTOS_CALIBRACION_MIRADA[0])}
 
     def _actualizar_calibracion_mirada(self, rasgos):
@@ -197,7 +208,7 @@ class ProcesadorSesion:
         luz = analisis.medir_luz(cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY))
         fuente = self._fuente_cursor()
         mano = self._detectar_mano(rgb, ts, ancho, alto) if fuente == "mano" else None
-        rostro = self._detectar_rostro(rgb, ts, ancho, alto) if self.detector_rostro else None
+        rostro = self._detectar_rostro(rgb, ts, ancho, alto, luz) if self.detector_rostro else None
 
         if (self.frames - 1) % self.modelos.config.pose_cada_n_frames == 0:
             puntos = self.modelos.detectar_pose(imagen)
@@ -228,7 +239,8 @@ class ProcesadorSesion:
         }
         if self.detector_rostro:
             respuesta["rostro"] = {"detectado": bool(rostro),
-                                   "ojos_abiertos": bool(rostro and rostro["ojos_abiertos"])}
+                                   "ojos_abiertos": bool(rostro and rostro["ojos_abiertos"]),
+                                   "apertura": round(rostro["apertura"], 3) if rostro else None}
             respuesta["calibracion_mirada"] = self.calibracion_mirada
         return respuesta
 
@@ -292,8 +304,26 @@ class ProcesadorSesion:
             "_palma": analisis.centro_palma(normalizados),
         }
 
-    def _detectar_rostro(self, rgb, ts, ancho, alto):
+    def _realzar(self, rgb):
+        """Ecualiza el brillo por zonas: con poca luz los ojos quedan en sombra
+        y el detector de iris pierde el borde."""
+        lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
+        lab[:, :, 0] = self._clahe.apply(lab[:, :, 0])
+        return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+    def _detectar_rostro(self, rgb, ts, ancho, alto, luz):
+        if luz["nivel"] < LUZ_REALCE or luz["estado"] == "contraluz":
+            rgb = self._realzar(rgb)
         resultado = self.detector_rostro.detect_for_video(imagen_mediapipe(rgb), ts)
         if not resultado.face_landmarks or len(resultado.face_landmarks[0]) < 478:
             return None
-        return analisis.rasgos_mirada([(p.x * ancho, p.y * alto) for p in resultado.face_landmarks[0]])
+        blendshapes = None
+        if resultado.face_blendshapes:
+            blendshapes = {c.category_name: c.score for c in resultado.face_blendshapes[0]}
+        habitual = None
+        if len(self._aperturas) >= MINIMO_APERTURA:
+            habitual = float(np.percentile(self._aperturas, 80))
+        rasgos = analisis.rasgos_mirada([(p.x * ancho, p.y * alto) for p in resultado.face_landmarks[0]],
+                                        blendshapes, habitual)
+        self._aperturas.append(rasgos["apertura"])
+        return rasgos

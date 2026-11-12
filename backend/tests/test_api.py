@@ -74,6 +74,8 @@ class PacientesTest(BaseAPITest):
         self.rosa.refresh_from_db()
         self.assertEqual((self.rosa.puntero, self.rosa.movilidad, self.rosa.comandos_voz),
                          ("mirada", "brazo_derecho", True))
+        r = self.client.patch(f"/api/pacientes/{self.rosa.pk}/", {"puntero": "voz"}, format="json")
+        self.assertEqual((r.status_code, r.data["puntero"]), (200, "voz"))
         for campo, valor in (("puntero", "pie"), ("movilidad", "volar")):
             r = self.client.patch(f"/api/pacientes/{self.rosa.pk}/", {campo: valor}, format="json")
             self.assertEqual(r.status_code, 400)
@@ -113,9 +115,33 @@ class HistoriaTest(BaseAPITest):
         self.assertEqual(self.subir(png(), paciente=ajeno.pk).status_code, 400)
 
 
+def respuesta_correcta(item):
+    """Lo que hay que mandar para acertar, según cómo se responde el juego."""
+    modo = item.get("modo", "eleccion")
+    if modo == "orden":
+        return {"orden": item["correcta"]}
+    if modo == "parejas":
+        return {"errores": 0}
+    return {"opcion": item["correcta"]}
+
+
+def respuesta_incorrecta(item):
+    modo = item.get("modo", "eleccion")
+    if modo == "orden":
+        return {"orden": list(reversed(item["correcta"]))}
+    if modo == "parejas":
+        return {"errores": item["ajustes"]["permitido"] + 5}
+    return {"opcion": (item["correcta"] + 1) % len(item["opciones"])}
+
+
 class SesionTest(BaseAPITest):
     def iniciar(self, tipo="memoria"):
         return self.client.post("/api/sesiones/", {"paciente": self.rosa.pk, "tipo": tipo},
+                                format="json")
+
+    def responder(self, sesion, indice, respuesta, tiempo_ms=3000):
+        return self.client.post(f"/api/sesiones/{sesion.pk}/responder/",
+                                {"indice_pregunta": indice, "tiempo_ms": tiempo_ms, **respuesta},
                                 format="json")
 
     def test_flujo_completo_sube_de_nivel(self):
@@ -126,18 +152,16 @@ class SesionTest(BaseAPITest):
         self.assertNotIn("correcta", preguntas[0])
         sesion = Sesion.objects.get(pk=r.data["id"])
 
+        # La primera siempre es de elegir una opción.
+        self.assertEqual(sesion.plan[0]["modo"], "eleccion")
         for indice, item in enumerate(sesion.plan):
             if indice == 0:  # Un error en la primera para probar la pista
-                incorrecta = (item["correcta"] + 1) % len(item["opciones"])
-                fallo = self.client.post(f"/api/sesiones/{sesion.pk}/responder/", {
-                    "indice_pregunta": 0, "opcion": incorrecta, "tiempo_ms": 5000}, format="json")
+                fallo = self.responder(sesion, 0, respuesta_incorrecta(item), 5000)
                 self.assertFalse(fallo.data["correcta"])
                 self.assertTrue(fallo.data["pista"])
                 self.assertNotIn("respuesta_correcta", fallo.data)
-            ok = self.client.post(f"/api/sesiones/{sesion.pk}/responder/", {
-                "indice_pregunta": indice, "opcion": item["correcta"], "tiempo_ms": 3000},
-                format="json")
-            self.assertTrue(ok.data["correcta"])
+            ok = self.responder(sesion, indice, respuesta_correcta(item))
+            self.assertTrue(ok.data["correcta"], (item["juego"], ok.data))
 
         fin = self.client.post(f"/api/sesiones/{sesion.pk}/finalizar/", {}, format="json")
         self.assertEqual(fin.status_code, 200)
@@ -153,6 +177,67 @@ class SesionTest(BaseAPITest):
         csv = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento-csv/")
         self.assertEqual(csv.status_code, 200)
         self.assertIn("Memoria", csv.content.decode("utf-8-sig"))
+
+    def test_cada_actividad_mezcla_sus_juegos(self):
+        esperados = {
+            "memoria": {"asociacion", "opuestos", "clasifica", "secuencia", "parejas"},
+            "atencion": {"pareja_igual", "no_pertenece", "eleccion", "sigue_figura"},
+            "coordinacion": {"eleccion", "alcanza_recuerda"},
+        }
+        for nivel in ("facil", "medio", "dificil"):
+            self.rosa.nivel = nivel
+            self.rosa.save()
+            for tipo, juegos in esperados.items():
+                r = self.iniciar(tipo)
+                self.assertEqual(r.status_code, 201, r.data)
+                self.assertEqual(len(r.data["preguntas"]), 8)
+                self.assertEqual({p["juego"] for p in r.data["preguntas"]}, juegos, (tipo, nivel))
+                self.assertTrue(all("correcta" not in p for p in r.data["preguntas"]))
+
+    def test_dificultad_de_los_juegos(self):
+        """Más pasos, más parejas y más cruces al subir de nivel."""
+        medidas = {}
+        for nivel in ("facil", "dificil"):
+            self.rosa.nivel = nivel
+            self.rosa.save()
+            memoria = Sesion.objects.get(pk=self.iniciar("memoria").data["id"]).plan
+            atencion = Sesion.objects.get(pk=self.iniciar("atencion").data["id"]).plan
+            secuencia = next(i for i in memoria if i["juego"] == "secuencia")
+            parejas = next(i for i in memoria if i["juego"] == "parejas")
+            figura = next(i for i in atencion if i["juego"] == "sigue_figura")
+            medidas[nivel] = (len(secuencia["opciones"]), len(parejas["opciones"]),
+                              figura["ajustes"]["intercambios"])
+        self.assertEqual(medidas["facil"], (3, 6, 2))
+        self.assertEqual(medidas["dificil"], (5, 12, 6))
+
+    def test_parejas_con_la_mirada(self):
+        """Con el cursor de la mirada, Parejas usa menos cartas (más grandes)."""
+        self.rosa.nivel, self.rosa.puntero = "dificil", "mirada"
+        self.rosa.save()
+        plan = Sesion.objects.get(pk=self.iniciar("memoria").data["id"]).plan
+        parejas = next(i for i in plan if i["juego"] == "parejas")
+        self.assertEqual(len(parejas["opciones"]), 8)
+        self.assertEqual(parejas["ajustes"]["permitido"], 6)
+
+    def test_secuencia_y_parejas(self):
+        sesion = Sesion.objects.get(pk=self.iniciar("memoria").data["id"])
+        indice, secuencia = next((i, item) for i, item in enumerate(sesion.plan) if item["modo"] == "orden")
+        fallo = self.responder(sesion, indice, respuesta_incorrecta(secuencia))
+        self.assertFalse(fallo.data["correcta"])
+        self.assertTrue(fallo.data["puede_reintentar"])
+        self.assertEqual(self.responder(sesion, indice, {"orden": [0, 0, 1]}).status_code, 400)
+        self.assertTrue(self.responder(sesion, indice, respuesta_correcta(secuencia)).data["correcta"])
+
+        # Parejas con demasiados errores: termina igual, pero como resuelta con ayuda.
+        indice, parejas = next((i, item) for i, item in enumerate(sesion.plan) if item["modo"] == "parejas")
+        r = self.responder(sesion, indice, respuesta_incorrecta(parejas), 60000)
+        self.assertFalse(r.data["correcta"])
+        self.assertFalse(r.data["puede_reintentar"])
+        self.assertTrue(r.data["completado"])
+        guardada = sesion.respuestas.get(indice_pregunta=indice)
+        self.assertEqual((guardada.correcta, guardada.intento), (True, 2))
+        self.assertLess(guardada.tiempo_ms, 60000)  # tiempo por jugada, no de toda la partida
+        self.assertEqual(self.responder(sesion, indice, {"errores": 0}).status_code, 400)
 
     def test_no_responde_dos_veces_bien(self):
         sesion = Sesion.objects.get(pk=self.iniciar().data["id"])
@@ -170,13 +255,31 @@ class SesionTest(BaseAPITest):
         self.assertEqual(self.iniciar("historia").status_code, 400)
 
     def test_mi_historia_con_fotos(self):
-        for nombre in ("a.png", "b.png", "c.png"):
-            self.client.post("/api/historia/", {"paciente": self.rosa.pk, "titulo": nombre,
+        for nombre, anio in (("a.png", 1975), ("b.png", 1990), ("c.png", "")):
+            self.client.post("/api/historia/", {"paciente": self.rosa.pk, "titulo": nombre, "anio": anio,
                                                 "archivo": png(nombre)}, format="multipart")
         r = self.iniciar("historia")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertEqual(len(r.data["preguntas"]), 3)
-        self.assertEqual(r.data["preguntas"][0]["medio"]["tipo"], "imagen")
+        preguntas = r.data["preguntas"]
+        # Cada recuerdo sale como mucho dos veces, más "ordena los recuerdos".
+        self.assertEqual(len(preguntas), 7)
+        juegos = {p["juego"] for p in preguntas}
+        self.assertEqual(juegos, {"momento", "quien_es", "foto_igual", "ordenar_recuerdos"})
+        momento = next(p for p in preguntas if p["juego"] == "momento")
+        self.assertEqual(momento["medio"]["tipo"], "imagen")
+        quien = next(p for p in preguntas if p["juego"] == "quien_es")
+        self.assertTrue(all(op["imagen"] for op in quien["opciones"]))
+        # Solo se ordenan los que tienen año (a y b): del más antiguo al más reciente.
+        sesion = Sesion.objects.get(pk=r.data["id"])
+        indice, ordenar = next((i, item) for i, item in enumerate(sesion.plan)
+                               if item["juego"] == "ordenar_recuerdos")
+        self.assertEqual([ordenar["opciones"][i]["texto"] for i in ordenar["correcta"]], ["a.png", "b.png"])
+        self.assertTrue(self.responder(sesion, indice, respuesta_correcta(ordenar)).data["correcta"])
+
+    def test_anio_invalido(self):
+        r = self.client.post("/api/historia/", {"paciente": self.rosa.pk, "titulo": "x", "anio": 1800,
+                                                "archivo": png()}, format="multipart")
+        self.assertEqual(r.status_code, 400)
 
     def test_cancelar_no_cambia_nivel(self):
         sesion_id = self.iniciar().data["id"]

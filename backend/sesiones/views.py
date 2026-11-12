@@ -46,7 +46,8 @@ class SesionViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Retri
         entrada.is_valid(raise_exception=True)
         datos = entrada.validated_data
         resultado = servicios.registrar_respuesta(
-            self.get_object(), datos["indice_pregunta"], datos["opcion"], datos["tiempo_ms"]
+            self.get_object(), datos["indice_pregunta"], datos["tiempo_ms"],
+            opcion=datos.get("opcion"), orden=datos.get("orden"), errores=datos.get("errores"),
         )
         return Response(resultado)
 

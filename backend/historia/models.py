@@ -22,6 +22,8 @@ class ContenidoHistoria(models.Model):
     paciente = models.ForeignKey(AdultoMayor, on_delete=models.CASCADE, related_name="contenidos")
     titulo = models.CharField(max_length=120)
     pista = models.CharField(max_length=200, blank=True)
+    # Año del recuerdo (opcional): permite el juego "Ordena los recuerdos".
+    anio = models.PositiveSmallIntegerField(null=True, blank=True)
     tipo = models.CharField(max_length=10, choices=TipoContenido.choices)
     archivo = models.FileField(upload_to=ruta_contenido, max_length=255)
     nombre_original = models.CharField(max_length=255, blank=True)

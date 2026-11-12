@@ -1247,3 +1247,147 @@ select {
   pointer-events: none;
 }
 .chip-voz-activo svg { color: var(--amarillo); }
+
+/* --- Juegos nuevos --------------------------------------------------------- */
+
+.opciones-tres { grid-template-columns: repeat(3, 1fr); }
+
+/* Foto de Mi Historia dentro de una opción */
+.opcion-foto {
+  flex: 1;
+  width: 100%;
+  min-height: 120px;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 18px;
+}
+
+/* Ordenar: número del paso elegido */
+.opciones-orden { position: relative; }
+.opciones-cinco { grid-template-columns: repeat(3, 1fr); }
+.opciones-orden .opcion { position: relative; font-size: 26px; }
+.orden-numero {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--amarillo);
+  color: var(--noche);
+  font-size: 30px;
+  font-weight: 800;
+  z-index: 1;
+}
+.opcion-elegida {
+  outline: 4px solid var(--amarillo);
+  cursor: default;
+}
+
+/* Cartas: Parejas y Sigue la figura */
+.cartas {
+  display: grid;
+  gap: 18px;
+  flex: 1;
+}
+.carta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 120px;
+  border-radius: var(--radio-tarjeta);
+  background: var(--bosque);
+  color: var(--blanco);
+  box-shadow: var(--sombra);
+  cursor: pointer;
+  font-weight: 700;
+}
+.carta-dorso {
+  font-size: 44px;
+  opacity: 0.85;
+}
+.carta-abierta {
+  background: var(--blanco);
+  color: var(--noche);
+}
+.carta-encontrada {
+  background: var(--menta);
+  outline: 4px solid var(--verde);
+  cursor: default;
+}
+.carta-emoji {
+  font-size: 64px;
+  line-height: 1;
+}
+.carta-texto { font-size: 22px; }
+
+.sigue {
+  display: grid;
+  gap: 20px;
+  flex: 1;
+  align-items: center;
+}
+.sigue-carta {
+  min-height: 240px;
+  transition: transform var(--paso, 1000ms) ease-in-out;
+}
+.sigue-objetivo {
+  outline: 6px solid var(--amarillo);
+  box-shadow: 0 0 0 12px rgba(251, 176, 45, 0.25);
+}
+/* Las dos cartas que se cruzan quedan por encima para que se vea el cruce. */
+.sigue-moviendo { z-index: 1; box-shadow: 0 10px 24px rgba(8, 28, 21, 0.25); }
+
+/* Alcanza y recuerda: el objeto a memorizar */
+.memorizar {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 16px;
+  border-radius: var(--radio-tarjeta);
+  background: var(--bosque);
+  color: var(--blanco);
+  font-size: 40px;
+}
+.memorizar-emoji { font-size: 180px; line-height: 1; }
+.memorizar-barra { width: 60%; background: rgba(255, 255, 255, 0.2); }
+.memorizar-barra > span {
+  width: 100%;
+  background: var(--amarillo);
+  animation: vaciar linear forwards;
+}
+@keyframes vaciar {
+  from { width: 100%; }
+  to { width: 0; }
+}
+
+
+/* Número para elegir con la voz (verde, para no confundirlo con el orden) */
+.opcion { position: relative; }
+.voz-numero {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-width: 56px;
+  height: 56px;
+  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--verde);
+  color: var(--blanco);
+  font-size: 32px;
+  font-weight: 800;
+  z-index: 1;
+}
+
+/* "La voz": sin cursor de ningún tipo en las pantallas del adulto mayor */
+body.solo-voz,
+body.solo-voz * {
+  cursor: none !important;
+}

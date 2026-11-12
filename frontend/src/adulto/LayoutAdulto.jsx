@@ -15,18 +15,48 @@ const SIN_CONEXION_MS = 5000;
 
 export default function LayoutAdulto() {
   const { paciente } = useSesion();
-  const { apagar } = useVision();
+  const { apagar, conVoz: vozActiva, puntero, usaCamara, camara, encender, estado } = useVision();
   const { pathname } = useLocation();
-  const conVoz = paciente.comandos_voz && !pathname.startsWith("/jugar/fin");
+  const navegar = useNavigate();
+  const ruta = pathname.replace(/\/$/, "");
+  const conVoz = vozActiva && !pathname.startsWith("/jugar/fin");
+  // Con "La voz" se elige solo hablando: no hay cursor ni selección por
+  // permanencia, ni siquiera con el mouse de pruebas.
+  const soloVoz = puntero === "voz";
 
   // Al salir del modo adulto mayor se apaga la cámara.
   useEffect(() => apagar, [apagar]);
+
+  // Apenas se deja de usar la voz, vuelve el cursor: si la forma de moverlo
+  // necesita la cámara y está apagada, se enciende sola (el permiso ya se dio
+  // en la pantalla 01, que junto con la despedida queda fuera de esto).
+  useEffect(() => {
+    if (usaCamara && camara === "apagada" && !SIN_AVISOS.includes(ruta)) encender();
+  }, [usaCamara, camara, ruta, encender]);
+
+  // Con la mirada no hay cursor hasta calibrar: si falta, se va a calibrar.
+  const calibracionMirada = estado?.calibracion_mirada?.estado;
+  useEffect(() => {
+    const sinCalibrar = calibracionMirada === "pendiente" || calibracionMirada === "en_progreso";
+    if (puntero === "mirada" && sinCalibrar && !SIN_AVISOS.includes(ruta) && ruta !== "/jugar/deteccion") {
+      navegar("/jugar/deteccion");
+    }
+  }, [puntero, calibracionMirada, ruta, navegar]);
+
+  // También se oculta la flecha del mouse mientras se juega con la voz. Vuelve
+  // donde la voz no puede ayudar: en la despedida (el micrófono ya se apagó) y
+  // si no hubo permiso de micrófono; ahí se sigue con el mouse.
+  const sinMicrofono = ruta === "/jugar/fin" || ruta === "/jugar/sin-permiso";
+  useEffect(() => {
+    document.body.classList.toggle("solo-voz", soloVoz && !sinMicrofono);
+    return () => document.body.classList.remove("solo-voz");
+  }, [soloVoz, sinMicrofono]);
 
   return (
     <>
       <Outlet />
       <AvisosVision />
-      <Puntero permanenciaMs={paciente.tiempo_permanencia_ms} />
+      {!soloVoz && <Puntero permanenciaMs={paciente.tiempo_permanencia_ms} />}
       {conVoz && <ComandosVoz />}
     </>
   );
@@ -34,14 +64,14 @@ export default function LayoutAdulto() {
 
 /** Pantallas 09 (poca luz) y 10 (cámara desconectada) como capa sobre la actividad. */
 function AvisosVision() {
-  const { control, camara, conexion, estado, reintentar } = useVision();
+  const { usaCamara, camara, conexion, estado, reintentar } = useVision();
   const { pathname } = useLocation();
   const navegar = useNavigate();
   const [aviso, setAviso] = useState(null);
   const desde = useRef({ luz: null, conexion: null });
   const ignorarHasta = useRef(0);
 
-  const activo = control === "camara" && !SIN_AVISOS.includes(pathname.replace(/\/$/, ""));
+  const activo = usaCamara && !SIN_AVISOS.includes(pathname.replace(/\/$/, ""));
   const enMenu = pathname.startsWith("/jugar/menu");
 
   useEffect(() => {

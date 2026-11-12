@@ -15,7 +15,7 @@ const MOVIMIENTO_MINIMO_PX = 70;
  * clase .eligiendo y la variable CSS --progreso (0 a 1) para dibujar el anillo.
  */
 export default function Puntero({ permanenciaMs = 1500 }) {
-  const { control, estado } = useVision();
+  const { control, usaCamara, estado } = useVision();
   const posicion = useRef(null);
   const anillo = useRef(null);
   const [visible, setVisible] = useState(null);
@@ -41,11 +41,11 @@ export default function Puntero({ permanenciaMs = 1500 }) {
 
   // Control con la mano: el servicio entrega x, y normalizados (0–1).
   useEffect(() => {
-    if (control !== "camara") return;
+    if (!usaCamara) return;
     const cursor = estado?.cursor;
     posicion.current = cursor ? { x: cursor.x * window.innerWidth, y: cursor.y * window.innerHeight } : null;
     setVisible(posicion.current);
-  }, [control, estado]);
+  }, [usaCamara, estado]);
 
   // Bucle de permanencia a 60 fps para que el anillo avance suave entre frames.
   useEffect(() => {

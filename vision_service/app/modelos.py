@@ -30,8 +30,14 @@ class Modelos:
                 base_options=BaseOptions(model_asset_path=str(config.modelo_rostro)),
                 running_mode=mp_vision.RunningMode.VIDEO,
                 num_faces=1,
-                min_face_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
+                # Algo más permisivo que las manos: lentes, poca luz o arrugas
+                # bajan la confianza sin que la cara deje de estar ahí.
+                min_face_detection_confidence=0.4,
+                min_face_presence_confidence=0.4,
+                min_tracking_confidence=0.4,
+                # Los blendshapes (eyeLook*, eyeBlink*) aportan una estimación de
+                # la mirada aprendida por MediaPipe, más estable que el iris solo.
+                output_face_blendshapes=True,
             )
         else:
             log.warning("No se encontró %s: el cursor con la mirada no estará disponible. "

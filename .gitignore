@@ -30,3 +30,6 @@ Thumbs.db
 
 # Modelo de scikit-learn (se genera con: python manage.py entrenar_modelo)
 *.joblib
+
+# Datos de AWS del servidor (bucket, contraseña de RDS)
+deploy/aws.env

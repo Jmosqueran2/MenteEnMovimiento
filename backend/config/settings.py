@@ -135,7 +135,15 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Límite de creación de cuentas por IP (evita registros masivos automáticos).
+    "DEFAULT_THROTTLE_RATES": {"registro": "10/hour"},
+    # En producción Caddy hace de proxy: la IP real llega en X-Forwarded-For.
+    "NUM_PROXIES": None if DEBUG else 1,
 }
+
+# Si cualquiera puede crear su cuenta de cuidador desde la pantalla de inicio.
+# Con False solo se crean desde /admin.
+REGISTRO_ABIERTO = env_bool("DJANGO_REGISTRO_ABIERTO", True)
 
 SIMPLE_JWT = {
     # Una sesión de estimulación no debe cortarse por un token vencido.

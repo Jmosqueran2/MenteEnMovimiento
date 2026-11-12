@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Respuesta, Sesion
+from .models import PedidoAyuda, Respuesta, Sesion, SesionPreparada
 
 
 class RespuestaInline(admin.TabularInline):
@@ -16,3 +16,15 @@ class SesionAdmin(admin.ModelAdmin):
     list_filter = ["tipo", "estado", "nivel"]
     readonly_fields = ["plan"]
     inlines = [RespuestaInline]
+
+
+@admin.register(SesionPreparada)
+class SesionPreparadaAdmin(admin.ModelAdmin):
+    list_display = ["paciente", "fecha", "estado", "nivel", "preparada", "iniciada", "terminada"]
+    list_filter = ["fecha"]
+
+
+@admin.register(PedidoAyuda)
+class PedidoAyudaAdmin(admin.ModelAdmin):
+    list_display = ["paciente", "motivo", "creado", "atendido"]
+    list_filter = ["atendido", "motivo"]

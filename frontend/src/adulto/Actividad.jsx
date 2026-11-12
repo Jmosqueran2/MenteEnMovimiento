@@ -5,8 +5,10 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { Boton, Cargando, IconoCirculo, PantallaAdulto } from "../componentes/comunes";
-import { decimal, NOMBRE_NIVEL, ORDEN_NIVEL } from "../formato";
+import { AvisoAyudaPedida, BotonAyuda, useAyuda } from "../componentes/ayuda";
+import { NOMBRE_ACTIVIDAD, rolCuidador } from "../formato";
 import { useSesion } from "../sesion";
+import { leerSesionHoy } from "../sesionHoy";
 import { callar, hablar, sonarAcierto, sonarReintento } from "../sonidos";
 import { useVision } from "../vision/ProveedorVision";
 import { formasDeNumero } from "../vision/voz";
@@ -22,9 +24,16 @@ const TITULOS = {
 /** Pantallas 05 a 08: pregunta → acierto / reintento → … → resumen. */
 export default function Actividad() {
   const { tipo } = useParams();
+  return <ActividadDeTipo key={tipo} tipo={tipo} />;
+}
+
+function ActividadDeTipo({ tipo }) {
   const navegar = useNavigate();
   const { paciente } = useSesion();
-  const { setModo } = useVision();
+  const { setModo, reiniciarObservaciones, tomarObservaciones } = useVision();
+  // Para el cierre al desmontar (cancelada), que no ve las funciones nuevas.
+  const observaciones = useRef(tomarObservaciones);
+  observaciones.current = tomarObservaciones;
 
   const [sesion, setSesion] = useState(null);
   const [error, setError] = useState(null);
@@ -49,6 +58,7 @@ export default function Actividad() {
       .then((nueva) => {
         if (!vigente) return;
         sesionActual.current = nueva;
+        reiniciarObservaciones(); // lo que la IA observe desde aquí es de esta actividad
         setSesion(nueva);
         inicioPregunta.current = performance.now();
       })
@@ -57,7 +67,7 @@ export default function Actividad() {
       vigente = false;
       setModo("seleccion");
     };
-  }, [tipo, paciente.id, setModo]);
+  }, [tipo, paciente.id, setModo, reiniciarObservaciones]);
 
   // Si se sale a mitad de la actividad, la sesión queda como cancelada.
   useEffect(
@@ -65,7 +75,7 @@ export default function Actividad() {
       callar();
       const s = sesionActual.current;
       if (s && !terminada.current) {
-        api(`/api/sesiones/${s.id}/finalizar/`, { metodo: "POST", datos: { cancelada: true } }).catch(() => {});
+        api(`/api/sesiones/${s.id}/finalizar/`, { metodo: "POST", datos: { cancelada: true, observaciones: observaciones.current() } }).catch(() => {});
       }
     },
     [],
@@ -138,7 +148,9 @@ export default function Actividad() {
 
   const finalizar = useCallback(async () => {
     try {
-      const r = await api(`/api/sesiones/${sesion.id}/finalizar/`, { metodo: "POST", datos: {} });
+      const r = await api(`/api/sesiones/${sesion.id}/finalizar/`, {
+        metodo: "POST", datos: { observaciones: tomarObservaciones() },
+      });
       terminada.current = true;
       setResumen(r);
       setFase("resumen");
@@ -147,7 +159,7 @@ export default function Actividad() {
     } catch (e) {
       setError(e.message);
     }
-  }, [sesion]);
+  }, [sesion, tomarObservaciones]);
 
   const siguiente = () => {
     if (indice + 1 >= total) return finalizar();
@@ -164,21 +176,7 @@ export default function Actividad() {
 
   const menu = () => navegar("/jugar/menu");
 
-  if (error) {
-    return (
-      <PantallaAdulto
-        lateral={<h1>{TITULOS[tipo]}</h1>}
-        acciones={<Boton icono={ArrowLeft} onClick={menu}>Volver al menú</Boton>}
-      >
-        <p className="etiqueta">Un momento</p>
-        <h2 className="titulo">No pudimos empezar</h2>
-        <div className="aviso aviso-crema">
-          <IconoCirculo icono={Lightbulb} tono="amarillo" />
-          <h3>{error}</h3>
-        </div>
-      </PantallaAdulto>
-    );
-  }
+  if (error) return <NoPudimosEmpezar tipo={tipo} error={error} menu={menu} />;
 
   if (!sesion) return <Cargando texto="Preparando tu actividad…" />;
 
@@ -198,7 +196,7 @@ export default function Actividad() {
       {fase === "acierto" && <Acierto {...comunes} onSiguiente={siguiente} />}
       {fase === "revelada" && <Acierto {...comunes} revelada onSiguiente={siguiente} />}
       {fase === "reintento" && <Reintento {...comunes} onReintentar={reintentar} />}
-      {fase === "resumen" && <Resumen resumen={resumen} nombre={paciente.nombre} menu={menu} />}
+      {fase === "resumen" && <Resumen resumen={resumen} paciente={paciente} menu={menu} tipo={tipo} />}
       {pausa && (
         <div className="dialogo-fondo">
           <div className="dialogo">
@@ -467,51 +465,83 @@ function Reintento({ indice, total, resultado, menu, onReintentar }) {
   );
 }
 
-/** Pantalla 08: resumen de la sesión. */
-function Resumen({ resumen, nombre, menu }) {
+/** Pantalla 05, variante de error: con «Pedir ayuda a mi cuidador» como acción principal. */
+function NoPudimosEmpezar({ tipo, error, menu }) {
+  const ayuda = useAyuda("actividad");
+  return (
+    <PantallaAdulto
+      lateral={<h1>{TITULOS[tipo]}</h1>}
+      acciones={
+        <>
+          <Boton variante={ayuda.pedida ? "principal" : "secundario"} icono={ArrowLeft} onClick={menu}>Volver al menú</Boton>
+          <BotonAyuda ayuda={ayuda} variante="principal" />
+        </>
+      }
+    >
+      <p className="etiqueta">Un momento</p>
+      <h2 className="titulo">No pudimos empezar</h2>
+      <div className="aviso aviso-crema">
+        <IconoCirculo icono={Lightbulb} tono="amarillo" />
+        <h3>{error}</h3>
+      </div>
+      <AvisoAyudaPedida ayuda={ayuda} />
+    </PantallaAdulto>
+  );
+}
+
+/**
+ * Pantalla 08: resumen de la actividad, en positivo: sin nivel ni errores.
+ * Si queda otra actividad preparada para hoy, el botón principal lleva a ella.
+ */
+function Resumen({ resumen, paciente, menu, tipo }) {
   const navegar = useNavigate();
-  const subio = ORDEN_NIVEL.indexOf(resumen.nivel_siguiente) > ORDEN_NIVEL.indexOf(resumen.nivel_anterior);
-  const nivel = NOMBRE_NIVEL[resumen.nivel_siguiente];
+  const [hoy, setHoy] = useState(null);
+  const rol = rolCuidador(paciente);
+
+  useEffect(() => {
+    leerSesionHoy(paciente.id).then(setHoy).catch(() => setHoy({ estado: "error" }));
+  }, [paciente.id]);
+
+  const siguiente = hoy?.estado === "en_curso" ? hoy.realizables.find((t) => !hoy.hechas.includes(t)) : null;
 
   return (
     <PantallaAdulto
       lateral={
         <div className="lateral-cuerpo lateral-centro">
           <span className="halo"><IconoCirculo icono={Trophy} tono="amarillo" tamano={120} /></span>
-          <h1>¡Gran trabajo, {nombre}!</h1>
+          <h1>¡Gran trabajo, {paciente.nombre}!</h1>
           <p>Hiciste un gran trabajo hoy.</p>
         </div>
       }
       acciones={
-        <>
-          <Boton variante="secundario" icono={ArrowLeft} onClick={menu}>Volver al menú</Boton>
-          <Boton icono={Flag} onClick={() => navegar("/jugar/fin")}>Terminar</Boton>
-        </>
+        siguiente ? (
+          <>
+            <Boton variante="secundario" icono={ArrowLeft} onClick={menu}>Volver al menú</Boton>
+            <Boton icono={ArrowRight} onClick={() => navegar(`/jugar/actividad/${siguiente}`)}>
+              Seguir con {NOMBRE_ACTIVIDAD[siguiente]}
+            </Boton>
+          </>
+        ) : (
+          <Boton icono={Flag} disabled={!hoy} onClick={() => navegar("/jugar/fin")}>Terminar</Boton>
+        )
       }
     >
-      <p className="etiqueta">Resumen de la sesión</p>
-      <h2 className="titulo">¡Terminaste tu sesión!</h2>
+      <p className="etiqueta">Resumen</p>
+      <h2 className="titulo">{siguiente ? `¡Terminaste ${NOMBRE_ACTIVIDAD[tipo]}!` : "¡Terminaste tu sesión!"}</h2>
       <div className="estadisticas">
         <div className="estadistica">
-          <strong>{resumen.aciertos} de {resumen.total}</strong>
-          Aciertos
-        </div>
-        <div className="estadistica">
-          <strong>{decimal(resumen.tiempo_promedio_s)} s</strong>
-          Tiempo promedio de respuesta
+          <strong>{resumen.aciertos}</strong>
+          {resumen.aciertos === 1 ? "Acierto" : "Aciertos"}
         </div>
         <div className="estadistica">
           <strong>{resumen.duracion_min} min</strong>
-          Duración de la sesión
+          De ejercicio
         </div>
       </div>
       <div className="aviso aviso-menta">
         <IconoCirculo icono={Check} tono="verde" />
-        <p>Tus resultados se guardaron para que tu cuidador los vea.</p>
+        <p>Tus resultados se guardaron para que tu {rol} los vea.</p>
       </div>
-      <p style={{ fontSize: 30, fontWeight: 700 }}>
-        {resumen.cambio_nivel && subio ? "¡Subiste de nivel! " : ""}Próxima sesión: Nivel {nivel}
-      </p>
     </PantallaAdulto>
   );
 }

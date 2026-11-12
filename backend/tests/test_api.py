@@ -4,6 +4,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import override_settings
@@ -85,6 +86,78 @@ class PacientesTest(BaseAPITest):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data["sesiones"], 0)
         self.assertIsNone(r.data["tasa_aciertos"])
+        pdf = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento-pdf/")
+        self.assertTrue(pdf.content.startswith(b"%PDF"))  # sin sesiones también se genera
+        self.client.force_authenticate(self.otro)
+        self.assertEqual(self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento-pdf/").status_code, 404)
+
+    def test_varias_personas_no_se_mezclan(self):
+        jorge = self.client.post("/api/pacientes/", {"nombre": "Jorge"}, format="json").data
+        self.client.post("/api/historia/", {"paciente": self.rosa.pk, "titulo": "Boda", "archivo": png()},
+                         format="multipart")
+        self.client.post("/api/sesiones/", {"paciente": jorge["id"], "tipo": "memoria"}, format="json")
+        yo = self.client.get("/api/auth/yo/").data
+        self.assertEqual({p["nombre"] for p in yo["adultos_mayores"]}, {"Rosa", "Jorge"})
+        self.assertEqual(len(self.client.get(f"/api/historia/?paciente={jorge['id']}").data), 0)
+        self.assertEqual(len(self.client.get(f"/api/historia/?paciente={self.rosa.pk}").data), 1)
+        self.assertEqual(len(self.client.get(f"/api/sesiones/?paciente={self.rosa.pk}").data), 0)
+        self.assertEqual(len(self.client.get(f"/api/sesiones/?paciente={jorge['id']}").data), 1)
+
+    def test_eliminar_persona_borra_sus_archivos(self):
+        jorge = AdultoMayor.objects.create(cuidador=self.cuidador, nombre="Jorge")
+        r = self.client.post("/api/historia/", {"paciente": jorge.pk, "titulo": "Playa", "archivo": png()},
+                             format="multipart")
+        ruta = Path(MEDIA_TEMPORAL) / jorge.contenidos.get().archivo.name
+        self.assertTrue(ruta.exists(), r.data)
+        self.client.force_authenticate(self.otro)
+        self.assertEqual(self.client.delete(f"/api/pacientes/{jorge.pk}/").status_code, 404)
+        self.client.force_authenticate(self.cuidador)
+        self.assertEqual(self.client.delete(f"/api/pacientes/{jorge.pk}/").status_code, 204)
+        self.assertFalse(AdultoMayor.objects.filter(pk=jorge.pk).exists())
+        self.assertFalse(ruta.exists())
+        self.assertTrue(AdultoMayor.objects.filter(pk=self.rosa.pk).exists())
+
+
+class RegistroTest(BaseAPITest):
+    def setUp(self):
+        cache.clear()  # el límite de registros por IP vive en la caché
+        self.client.force_authenticate(None)
+
+    def registrar(self, **cambios):
+        datos = {"nombre": "Marta", "usuario": "marta", "email": "", "clave": "Girasoles-del-2026"}
+        return self.client.post("/api/auth/registro/", {**datos, **cambios}, format="json")
+
+    def test_crea_cuenta_y_entra(self):
+        r = self.registrar()
+        self.assertEqual(r.status_code, 201, r.data)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r.data['access']}")
+        yo = self.client.get("/api/auth/yo/").data
+        self.assertEqual((yo["username"], yo["first_name"], yo["adultos_mayores"]), ("marta", "Marta", []))
+        # La cuenta nueva no ve a las personas de otros cuidadores.
+        self.assertEqual(self.client.get(f"/api/pacientes/{self.rosa.pk}/").status_code, 404)
+
+    def test_usuario_repetido(self):
+        r = self.registrar(usuario="ANA")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("usuario", r.data)
+
+    def test_usuario_con_espacios(self):
+        self.assertEqual(self.registrar(usuario="marta lopez").status_code, 400)
+
+    def test_clave_debil(self):
+        r = self.registrar(clave="1234")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("clave", r.data)
+
+    @override_settings(REGISTRO_ABIERTO=False)
+    def test_registro_cerrado(self):
+        self.assertEqual(self.client.get("/api/auth/registro/").data, {"abierto": False})
+        self.assertEqual(self.registrar().status_code, 403)
+        self.assertFalse(get_user_model().objects.filter(username="marta").exists())
+
+    def test_limite_por_ip(self):
+        codigos = [self.registrar(usuario=f"u{i}", clave="1234").status_code for i in range(11)]
+        self.assertEqual(codigos[-1], 429)
 
 
 class HistoriaTest(BaseAPITest):
@@ -177,6 +250,11 @@ class SesionTest(BaseAPITest):
         csv = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento-csv/")
         self.assertEqual(csv.status_code, 200)
         self.assertIn("Memoria", csv.content.decode("utf-8-sig"))
+
+        pdf = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento-pdf/?dias=30")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
 
     def test_cada_actividad_mezcla_sus_juegos(self):
         esperados = {
@@ -276,6 +354,77 @@ class SesionTest(BaseAPITest):
         self.assertEqual([ordenar["opciones"][i]["texto"] for i in ordenar["correcta"]], ["a.png", "b.png"])
         self.assertTrue(self.responder(sesion, indice, respuesta_correcta(ordenar)).data["correcta"])
 
+    def test_lo_que_observo_la_ia(self):
+        sesion = Sesion.objects.get(pk=self.iniciar().data["id"])
+        for i, item in enumerate(sesion.plan):
+            self.responder(sesion, i, respuesta_correcta(item))
+        self.client.post(f"/api/pacientes/{self.rosa.pk}/ayuda/", {"motivo": "luz"}, format="json")
+        observaciones = {"puntero": "mirada", "postura_vigilada": True, "avisos_encorvado": 2,
+                         "avisos_inclinado": 1, "segundos_mala_postura": 95, "error_mirada": 0.047,
+                         "correcciones_mirada": 3, "imagenes_analizadas": 4200, "ms_por_imagen": 41.5}
+        r = self.client.post(f"/api/sesiones/{sesion.pk}/finalizar/", {"observaciones": observaciones}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        seguimiento = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento/").data
+        ia = seguimiento["ia"]
+        self.assertEqual((ia["avisos_postura"], ia["pedidos_ayuda"], ia["minutos_mala_postura"]), (3, 1, 1.6))
+        self.assertEqual(ia["punteros"], {"mirada": 1})
+        self.assertEqual(seguimiento["recientes"][0]["ia"]["avisos_postura"], 3)
+
+        csv = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento-csv/").content.decode("utf-8-sig")
+        self.assertIn("Avisos de postura", csv)
+        self.assertIn("La mirada", csv)
+        pdf = self.client.get(f"/api/pacientes/{self.rosa.pk}/seguimiento-pdf/")
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
+
+    def test_observaciones_invalidas(self):
+        sesion_id = self.iniciar().data["id"]
+        for malas in ({"puntero": "teclado"}, {"avisos_encorvado": -1}, {"error_mirada": 3}):
+            r = self.client.post(f"/api/sesiones/{sesion_id}/finalizar/", {"observaciones": malas}, format="json")
+            self.assertEqual(r.status_code, 400, malas)
+
+    def subir_con_pregunta(self, **extra):
+        datos = {"paciente": self.rosa.pk, "titulo": "Boda", "archivo": png("boda.png"),
+                 "pregunta": "¿Con quién te casaste?", "opciones": ["Juan", "Pedro", "Luis", "Mario"],
+                 "respuesta_correcta": 0, **extra}
+        return self.client.post("/api/historia/", datos, format="multipart")
+
+    def test_pregunta_propia(self):
+        r = self.subir_con_pregunta()
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual((r.data["opciones"], r.data["respuesta_correcta"]), (["Juan", "Pedro", "Luis", "Mario"], 0))
+        # Con una sola foto alcanza, porque tiene su propia pregunta.
+        for nivel, opciones in (("facil", 2), ("dificil", 4)):
+            self.rosa.nivel = nivel
+            self.rosa.save()
+            r = self.iniciar("historia")
+            self.assertEqual(r.status_code, 201, r.data)
+            sesion = Sesion.objects.get(pk=r.data["id"])
+            indice, item = next((i, it) for i, it in enumerate(sesion.plan) if it["juego"] == "pregunta_propia")
+            publica = r.data["preguntas"][indice]
+            self.assertEqual(publica["enunciado"], "¿Con quién te casaste?")
+            self.assertEqual(publica["medio"]["tipo"], "imagen")
+            self.assertEqual(len(publica["opciones"]), opciones)
+            self.assertIn("Juan", [o["texto"] for o in publica["opciones"]])
+            self.assertEqual(item["opciones"][item["correcta"]]["texto"], "Juan")
+            self.assertTrue(self.responder(sesion, indice, {"opcion": item["correcta"]}).data["correcta"])
+
+    def test_pregunta_propia_validaciones(self):
+        casos = [
+            ({"opciones": ["Juan"]}, "opciones"),                          # una sola opción
+            ({"opciones": ["Juan", "juan "]}, "opciones"),                 # repetidas
+            ({"respuesta_correcta": 5}, "respuesta_correcta"),             # fuera de rango
+            ({"pregunta": "", "opciones": ["Juan", "Pedro"]}, "pregunta"),  # opciones sin pregunta
+        ]
+        for extra, campo in casos:
+            r = self.subir_con_pregunta(**extra)
+            self.assertEqual(r.status_code, 400, extra)
+            self.assertIn(campo, r.data)
+        # Sin pregunta propia también se puede subir (es opcional).
+        r = self.client.post("/api/historia/", {"paciente": self.rosa.pk, "titulo": "Playa", "archivo": png()},
+                             format="multipart")
+        self.assertEqual((r.status_code, r.data["pregunta"], r.data["opciones"]), (201, "", []))
+
     def test_anio_invalido(self):
         r = self.client.post("/api/historia/", {"paciente": self.rosa.pk, "titulo": "x", "anio": 1800,
                                                 "archivo": png()}, format="multipart")
@@ -287,3 +436,99 @@ class SesionTest(BaseAPITest):
                              format="json")
         self.assertEqual(r.data["estado"], "cancelada")
         self.assertFalse(r.data["cambio_nivel"])
+
+
+class SesionPreparadaTest(BaseAPITest):
+    """Modelo híbrido: el cuidador prepara (11) y el adulto mayor empieza (03–04)."""
+
+    def url(self, accion=""):
+        return f"/api/pacientes/{self.rosa.pk}/{accion}"
+
+    def preparar(self, **datos):
+        datos.setdefault("actividades_habilitadas", ["memoria", "atencion"])
+        return self.client.post(self.url("preparar/"), datos, format="json")
+
+    def terminar_actividad(self, tipo):
+        sesion = self.client.post("/api/sesiones/", {"paciente": self.rosa.pk, "tipo": tipo}, format="json")
+        self.assertEqual(sesion.status_code, 201, sesion.data)
+        plan = Sesion.objects.get(pk=sesion.data["id"]).plan
+        for i, item in enumerate(plan):
+            self.client.post(f"/api/sesiones/{sesion.data['id']}/responder/",
+                             {"indice_pregunta": i, "tiempo_ms": 3000, **respuesta_correcta(item)}, format="json")
+        return self.client.post(f"/api/sesiones/{sesion.data['id']}/finalizar/", {}, format="json")
+
+    def test_sin_preparar(self):
+        r = self.client.get(self.url("sesion-hoy/"))
+        self.assertEqual(r.data["estado"], "no_preparada")
+        self.assertFalse(r.data["inicio_autonomo"])  # toda persona nueva empieza acompañada
+
+    def test_preparar_guarda_configuracion_y_queda_lista(self):
+        r = self.preparar(nivel="medio", tiempo_permanencia_ms=2000, inicio_autonomo=True)
+        self.assertEqual(r.status_code, 201, r.data)
+        self.rosa.refresh_from_db()
+        self.assertEqual((self.rosa.nivel, self.rosa.tiempo_permanencia_ms, self.rosa.inicio_autonomo),
+                         ("medio", 2000, True))
+        self.assertEqual(r.data["sesion_hoy"]["estado"], "lista")
+        self.assertEqual(r.data["sesion_hoy"]["actividades"], ["memoria", "atencion"])
+
+    def test_mi_historia_sin_fotos_no_se_prepara(self):
+        r = self.preparar(actividades_habilitadas=["historia"], nivel="dificil")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Mi Historia", str(r.data))
+        self.rosa.refresh_from_db()
+        self.assertEqual(self.rosa.nivel, "facil")  # no se guardó nada
+
+    def test_flujo_completo(self):
+        self.preparar()
+        self.assertEqual(self.client.post(self.url("sesion-hoy/comenzar/")).data["estado"], "en_curso")
+        # Solo se puede hacer lo preparado.
+        r = self.client.post("/api/sesiones/", {"paciente": self.rosa.pk, "tipo": "coordinacion"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+        self.terminar_actividad("memoria")
+        estado = self.client.get(self.url("sesion-hoy/")).data
+        self.assertEqual((estado["estado"], estado["hechas"]), ("en_curso", ["memoria"]))
+
+        self.terminar_actividad("atencion")
+        estado = self.client.get(self.url("sesion-hoy/")).data
+        self.assertEqual(estado["estado"], "terminada")
+        self.assertTrue(estado["completa"])
+        self.assertEqual(estado["total"], 16)
+        self.assertTrue(estado["sugerir_autonomia"])  # acompañada, todo bien y sin pedir ayuda
+
+    def test_no_se_prepara_en_curso(self):
+        self.preparar()
+        self.client.post(self.url("sesion-hoy/comenzar/"))
+        r = self.preparar(nivel="dificil")
+        self.assertEqual(r.status_code, 400)
+        self.rosa.refresh_from_db()
+        self.assertEqual(self.rosa.nivel, "facil")
+
+    def test_dar_por_terminada(self):
+        self.preparar()
+        self.client.post(self.url("sesion-hoy/comenzar/"))
+        r = self.client.post(self.url("sesion-hoy/terminar/"))
+        self.assertEqual(r.data["estado"], "terminada")
+        self.assertFalse(r.data["completa"])
+        self.assertEqual(self.preparar().status_code, 201)  # «Preparar otra»
+
+    def test_comenzar_sin_preparar(self):
+        self.assertEqual(self.client.post(self.url("sesion-hoy/comenzar/")).status_code, 400)
+
+    def test_guardar_cambios_actualiza_sesion_lista(self):
+        self.preparar()
+        self.client.patch(self.url(), {"actividades_habilitadas": ["atencion"]}, format="json")
+        self.assertEqual(self.client.get(self.url("sesion-hoy/")).data["actividades"], ["atencion"])
+
+    def test_pedir_ayuda(self):
+        self.client.post(self.url("ayuda/"), {"motivo": "camara"}, format="json")
+        self.client.post(self.url("ayuda/"), {"motivo": "camara"}, format="json")  # no se duplica
+        r = self.client.get(self.url("sesion-hoy/"))
+        self.assertEqual(r.data["ayuda"]["motivo_texto"], "Se desconectó la cámara")
+        self.assertEqual(self.rosa.pedidos_ayuda.count(), 1)
+        self.assertIsNone(self.client.post(self.url("ayuda/atendida/")).data["ayuda"])
+
+    def test_otro_cuidador_no_ve_la_sesion(self):
+        self.client.force_authenticate(self.otro)
+        self.assertEqual(self.client.get(self.url("sesion-hoy/")).status_code, 404)
+        self.assertEqual(self.client.post(self.url("ayuda/")).status_code, 404)

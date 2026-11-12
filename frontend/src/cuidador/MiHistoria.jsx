@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUp, CheckCircle2, FileX, Music, Trash2 } from "lucide-react";
+import { ArrowUp, CheckCircle2, FileX, HelpCircle, Music, Plus, Trash2, X } from "lucide-react";
 import { api, ErrorApi } from "../api";
 import { IconoCirculo } from "../componentes/comunes";
 import { useSesion } from "../sesion";
 import { Encabezado } from "./LayoutCuidador";
 
 const PERMITIDOS = /\.(jpe?g|png|mp3)$/i;
+const MAX_OPCIONES = 4;
+const OPCIONES_VACIAS = ["", ""];
 const mensajeFormato = (nombre) =>
   `«${nombre}» no se pudo subir. Este formato no está permitido. Usa una foto JPG o PNG, o un audio MP3.`;
 
@@ -21,6 +23,10 @@ export default function MiHistoria() {
   const [titulo, setTitulo] = useState("");
   const [pista, setPista] = useState("");
   const [anio, setAnio] = useState("");
+  // Pregunta propia (opcional): la pregunta, sus opciones y cuál es la correcta.
+  const [pregunta, setPregunta] = useState("");
+  const [opciones, setOpciones] = useState(OPCIONES_VACIAS);
+  const [correcta, setCorrecta] = useState(null);
   const [errorArchivo, setErrorArchivo] = useState(null);
   const [error, setError] = useState(null);
   const [arrastrando, setArrastrando] = useState(false);
@@ -57,19 +63,49 @@ export default function MiHistoria() {
     setTitulo("");
     setPista("");
     setAnio("");
+    setPregunta("");
+    setOpciones(OPCIONES_VACIAS);
+    setCorrecta(null);
     setErrorArchivo(null);
     setError(null);
     setGuardado(null);
   };
 
+  const cambiarOpcion = (i, texto) => setOpciones((lista) => lista.map((o, k) => (k === i ? texto : o)));
+  const quitarOpcion = (i) => {
+    setOpciones((lista) => lista.filter((_, k) => k !== i));
+    setCorrecta((c) => (c === i ? null : c !== null && c > i ? c - 1 : c));
+  };
+
+  /** Revisa la pregunta propia; devuelve un mensaje de error o null. */
+  const revisarPregunta = () => {
+    const escritas = opciones.map((o) => o.trim()).filter(Boolean);
+    const usaPregunta = pregunta.trim() || escritas.length || correcta !== null;
+    if (!usaPregunta) return null;
+    if (!pregunta.trim()) return "Escribe la pregunta, o deja vacías las opciones.";
+    if (escritas.length < 2) return "Escribe al menos 2 opciones.";
+    if (new Set(escritas.map((o) => o.toLowerCase())).size !== escritas.length) return "Las opciones no pueden repetirse.";
+    if (correcta === null || !opciones[correcta]?.trim()) return "Marca cuál opción es la correcta.";
+    return null;
+  };
+
   const guardar = async () => {
     if (!archivo) return setError("Elige una foto o un audio.");
     if (!titulo.trim()) return setError("Escribe un título.");
+    const problema = revisarPregunta();
+    if (problema) return setError(problema);
     const formulario = new FormData();
     formulario.append("paciente", paciente.id);
     formulario.append("titulo", titulo.trim());
     formulario.append("pista", pista.trim());
     if (anio.trim()) formulario.append("anio", anio.trim());
+    if (pregunta.trim()) {
+      // Solo las opciones escritas; la correcta se cuenta entre ellas.
+      const llenas = opciones.map((o, i) => [o.trim(), i]).filter(([o]) => o);
+      formulario.append("pregunta", pregunta.trim());
+      llenas.forEach(([o]) => formulario.append("opciones", o));
+      formulario.append("respuesta_correcta", llenas.findIndex(([, i]) => i === correcta));
+    }
     formulario.append("archivo", archivo);
     setEnviando(true);
     try {
@@ -77,8 +113,9 @@ export default function MiHistoria() {
       setGuardado(nuevo);
       cargar();
     } catch (e) {
-      if (e instanceof ErrorApi && e.datos?.anio) {
-        setError(e.datos.anio[0]);
+      const campo = ["anio", "pregunta", "opciones", "respuesta_correcta"].find((c) => e instanceof ErrorApi && e.datos?.[c]);
+      if (campo) {
+        setError([].concat(e.datos[campo])[0]);
       } else if (e instanceof ErrorApi && e.datos?.archivo) {
         setErrorArchivo({ nombre: archivo.name, mensaje: e.datos.archivo[0] });
         setArchivo(null);
@@ -110,7 +147,12 @@ export default function MiHistoria() {
               <span className="imagen">
                 {c.tipo === "imagen" ? <img src={c.url} alt="" /> : <Music size={40} />}
               </span>
-              <figcaption>{c.titulo}</figcaption>
+              <figcaption>
+                {c.titulo}
+                {c.pregunta && (
+                  <span className="con-pregunta" title={c.pregunta}><HelpCircle size={14} aria-hidden="true" /> Con pregunta</span>
+                )}
+              </figcaption>
               <button type="button" className="borrar" aria-label={`Borrar ${c.titulo}`} onClick={() => borrar(c)}>
                 <Trash2 size={18} />
               </button>
@@ -138,6 +180,12 @@ export default function MiHistoria() {
                 <strong style={{ fontSize: 22 }}>{guardado.titulo}</strong>
                 {guardado.pista && <span className="texto-apoyo">Pista: {guardado.pista}</span>}
                 {guardado.anio && <span className="texto-apoyo">Año: {guardado.anio}</span>}
+                {guardado.pregunta && (
+                  <span className="texto-apoyo">
+                    Pregunta: {guardado.pregunta} · Correcta: <strong>{guardado.opciones[guardado.respuesta_correcta]}</strong>
+                    {" "}({guardado.opciones.length} opciones)
+                  </span>
+                )}
                 <span className="chip chip-verde" style={{ fontSize: 15, justifySelf: "start" }}>
                   Se agregó a la actividad Mi Historia
                 </span>
@@ -234,6 +282,43 @@ export default function MiHistoria() {
               Con el año de al menos 2 recuerdos aparece el juego «Ordena los recuerdos».
             </span>
           </div>
+          <fieldset className="pregunta-propia" disabled={conError}>
+            <legend>Pregunta para la actividad (opcional)</legend>
+            <p className="texto-apoyo" style={{ fontSize: 15 }}>
+              {paciente.nombre} {archivo && /\.mp3$/i.test(archivo.name) ? "escuchará este audio" : "verá esta foto"} con tu
+              pregunta y elegirá una opción. En nivel Fácil se muestran 2 opciones; en Medio, 3; en Difícil, todas.
+              Si la dejas vacía, se arman preguntas automáticas con el título.
+            </p>
+            <div className="campo">
+              <label htmlFor="pregunta">Pregunta</label>
+              <input id="pregunta" value={pregunta} placeholder="¿Con quién te casaste?" maxLength={200}
+                     onChange={(e) => setPregunta(e.target.value)} />
+            </div>
+            <div className="opciones-propias" role="radiogroup" aria-label="Opciones; marca la correcta">
+              {opciones.map((texto, i) => (
+                <div key={i} className={correcta === i ? "opcion-propia es-correcta" : "opcion-propia"}>
+                  <label className="marcar-correcta">
+                    <input type="radio" name="correcta" checked={correcta === i} onChange={() => setCorrecta(i)} />
+                    <span>{correcta === i ? "Correcta" : "Marcar correcta"}</span>
+                  </label>
+                  <input aria-label={"Opción " + (i + 1)} value={texto} maxLength={80}
+                         placeholder={["Juan", "Pedro", "Luis", "Mario"][i]}
+                         onChange={(e) => cambiarOpcion(i, e.target.value)} />
+                  {opciones.length > 2 && (
+                    <button type="button" className="quitar-opcion" aria-label={"Quitar opción " + (i + 1)} onClick={() => quitarOpcion(i)}>
+                      <X size={18} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {opciones.length < MAX_OPCIONES && (
+              <button type="button" className="boton boton-secundario boton-compacto" style={{ justifySelf: "start" }}
+                      onClick={() => setOpciones((lista) => [...lista, ""])}>
+                <Plus size={18} /> Agregar opción
+              </button>
+            )}
+          </fieldset>
           {error && <p className="error-texto">{error}</p>}
         </div>
         {galeria}

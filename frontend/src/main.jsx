@@ -6,9 +6,11 @@ import LayoutAdulto from "./adulto/LayoutAdulto";
 import Menu from "./adulto/Menu";
 import { Cargando } from "./componentes/comunes";
 import Configuracion from "./cuidador/Configuracion";
-import LayoutCuidador from "./cuidador/LayoutCuidador";
+import LayoutCuidador, { CambiarPersona } from "./cuidador/LayoutCuidador";
 import Login from "./cuidador/Login";
+import Registro from "./cuidador/Registro";
 import MiHistoria from "./cuidador/MiHistoria";
+import Pacientes from "./cuidador/Pacientes";
 import Panel from "./cuidador/Panel";
 import Seguimiento from "./cuidador/Seguimiento";
 import { ProveedorSesion, useSesion } from "./sesion";
@@ -26,6 +28,7 @@ function RequiereSesion({ children, conPaciente = false }) {
 const rutas = createBrowserRouter([
   { path: "/", element: <Navigate to="/cuidador" replace /> },
   { path: "/login", element: <Login /> },
+  { path: "/registro", element: <Registro /> },
   {
     path: "/cuidador",
     element: (
@@ -38,6 +41,9 @@ const rutas = createBrowserRouter([
       { path: "historia", element: <RequiereSesion conPaciente><MiHistoria /></RequiereSesion> },
       { path: "seguimiento", element: <RequiereSesion conPaciente><Seguimiento /></RequiereSesion> },
       { path: "configuracion", element: <Configuracion /> },
+      { path: "pacientes", element: <Pacientes /> },
+      { path: "nuevo-paciente", element: <Configuracion nueva /> },
+      { path: "paciente/:id", element: <CambiarPersona /> },
     ],
   },
   {

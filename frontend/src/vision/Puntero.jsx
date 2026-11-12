@@ -15,8 +15,12 @@ const MOVIMIENTO_MINIMO_PX = 70;
  * clase .eligiendo y la variable CSS --progreso (0 a 1) para dibujar el anillo.
  */
 export default function Puntero({ permanenciaMs = 1500 }) {
-  const { control, usaCamara, estado } = useVision();
+  const { control, usaCamara, estado, objetivoMirada } = useVision();
   const posicion = useRef(null);
+  // De dónde viene el cursor ahora ("mano", "mirada", "cabeza"), para el bucle de permanencia.
+  const fuente = useRef(null);
+  const avisarObjetivo = useRef(objetivoMirada);
+  avisarObjetivo.current = objetivoMirada;
   const anillo = useRef(null);
   const [visible, setVisible] = useState(null);
 
@@ -44,6 +48,7 @@ export default function Puntero({ permanenciaMs = 1500 }) {
     if (!usaCamara) return;
     const cursor = estado?.cursor;
     posicion.current = cursor ? { x: cursor.x * window.innerWidth, y: cursor.y * window.innerHeight } : null;
+    fuente.current = cursor?.fuente || null;
     setVisible(posicion.current);
   }, [usaCamara, estado]);
 
@@ -85,6 +90,9 @@ export default function Puntero({ permanenciaMs = 1500 }) {
         soltar(elegido);
         actual = null;
         ancla = { ...p };
+        // Con la mirada, elegir un botón confirma dónde estaba mirando la
+        // persona: el servicio lo usa para corregir la deriva del cursor.
+        if (fuente.current === "mirada") avisarObjetivo.current?.(elegido.getBoundingClientRect());
         sonarSeleccion();
         elegido.click();
       }

@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 from pacientes.models import AdultoMayor, Nivel, TipoActividad
 
@@ -20,9 +21,65 @@ class MetodoAjuste(models.TextChoices):
     REGLAS = "reglas", "Reglas fijas"
 
 
+class SesionPreparada(models.Model):
+    """Lo que el cuidador deja listo para hoy (pantalla 11). El adulto mayor
+    la empieza cuando quiere (pantalla 03) y solo ve estas actividades (04).
+
+    Vale para el día en que se preparó; al día siguiente vuelve a "no preparada".
+    """
+
+    paciente = models.ForeignKey(AdultoMayor, on_delete=models.CASCADE, related_name="preparadas")
+    fecha = models.DateField(default=timezone.localdate)
+    actividades = models.JSONField(default=list)
+    nivel = models.CharField(max_length=10, choices=Nivel.choices)
+    preparada = models.DateTimeField(auto_now_add=True)
+    iniciada = models.DateTimeField(null=True, blank=True)
+    terminada = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "sesión preparada"
+        verbose_name_plural = "sesiones preparadas"
+        ordering = ["-preparada", "-id"]
+
+    def __str__(self):
+        return f"{self.paciente} · {self.fecha} · {self.estado}"
+
+    @property
+    def estado(self):
+        if self.terminada:
+            return "terminada"
+        if self.iniciada:
+            return "en_curso"
+        return "lista"
+
+
+class MotivoAyuda(models.TextChoices):
+    LUZ = "luz", "Hay poca luz"
+    CAMARA = "camara", "Se desconectó la cámara"
+    CONEXION = "conexion", "Se perdió la conexión"
+    ACTIVIDAD = "actividad", "No pudo empezar una actividad"
+    OTRO = "otro", "Pidió ayuda"
+
+
+class PedidoAyuda(models.Model):
+    """«Pedir ayuda a mi cuidador» desde las pantallas 05, 09 y 10."""
+
+    paciente = models.ForeignKey(AdultoMayor, on_delete=models.CASCADE, related_name="pedidos_ayuda")
+    motivo = models.CharField(max_length=10, choices=MotivoAyuda.choices, default=MotivoAyuda.OTRO)
+    creado = models.DateTimeField(auto_now_add=True)
+    atendido = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "pedido de ayuda"
+        verbose_name_plural = "pedidos de ayuda"
+        ordering = ["-creado", "-id"]
+
+
 class Sesion(models.Model):
     paciente = models.ForeignKey(AdultoMayor, on_delete=models.CASCADE, related_name="sesiones")
     tipo = models.CharField(max_length=15, choices=TipoActividad.choices)
+    preparada = models.ForeignKey(SesionPreparada, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="sesiones")
     nivel = models.CharField(max_length=10, choices=Nivel.choices)
     # Preguntas de esta sesión con su orden de opciones ya barajado y la
     # respuesta correcta. Nunca se envía completo al cliente.
@@ -41,6 +98,10 @@ class Sesion(models.Model):
     ajuste = models.CharField(max_length=10, choices=Ajuste.choices, blank=True)
     ajuste_metodo = models.CharField(max_length=10, choices=MetodoAjuste.choices, blank=True)
     ajuste_confianza = models.FloatField(null=True, blank=True)
+    # Lo que observó la IA de visión durante la actividad (lo junta el
+    # navegador y lo manda al finalizar): avisos de postura, de dónde vino el
+    # cursor, precisión de la mirada, imágenes analizadas…
+    observaciones = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = "sesión"

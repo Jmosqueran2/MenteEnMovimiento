@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, Navigate, useNavigate } from "react-router-dom";
+import { registroAbierto } from "../api";
 import { Marca } from "../componentes/comunes";
 import { useSesion } from "../sesion";
 
@@ -10,6 +11,11 @@ export default function Login() {
   const [clave, setClave] = useState("");
   const [error, setError] = useState(null);
   const [enviando, setEnviando] = useState(false);
+  const [puedeRegistrarse, setPuedeRegistrarse] = useState(false);
+
+  useEffect(() => {
+    registroAbierto().then(setPuedeRegistrarse);
+  }, []);
 
   if (cuidador) return <Navigate to="/cuidador" replace />;
 
@@ -46,6 +52,11 @@ export default function Login() {
           {enviando ? "Entrando…" : "Entrar"}
         </button>
         {import.meta.env.DEV && <p className="pista-demo">Demo: cuidador / MenteEnMovimiento2026</p>}
+        {puedeRegistrarse && (
+          <p className="enlace-login">
+            ¿Primera vez? <Link to="/registro">Crear una cuenta</Link>
+          </p>
+        )}
       </form>
     </div>
   );

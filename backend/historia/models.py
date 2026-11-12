@@ -24,6 +24,11 @@ class ContenidoHistoria(models.Model):
     pista = models.CharField(max_length=200, blank=True)
     # Año del recuerdo (opcional): permite el juego "Ordena los recuerdos".
     anio = models.PositiveSmallIntegerField(null=True, blank=True)
+    # Pregunta propia (opcional): la escribe el cuidador con sus opciones y
+    # cuál es la correcta. En la actividad se muestra con la foto o el audio.
+    pregunta = models.CharField(max_length=200, blank=True)
+    opciones = models.JSONField(default=list, blank=True)
+    respuesta_correcta = models.PositiveSmallIntegerField(null=True, blank=True)
     tipo = models.CharField(max_length=10, choices=TipoContenido.choices)
     archivo = models.FileField(upload_to=ruta_contenido, max_length=255)
     nombre_original = models.CharField(max_length=255, blank=True)
@@ -36,3 +41,7 @@ class ContenidoHistoria(models.Model):
 
     def __str__(self):
         return f"{self.titulo} ({self.get_tipo_display()})"
+
+    @property
+    def tiene_pregunta(self):
+        return bool(self.pregunta) and len(self.opciones) >= 2 and self.respuesta_correcta is not None

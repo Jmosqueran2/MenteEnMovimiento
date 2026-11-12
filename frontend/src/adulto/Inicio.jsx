@@ -1,24 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Check, Eraser, Info, Lock, LogOut, Play, Power, RotateCcw } from "lucide-react";
+import {
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarClock, Check, Eraser, Info, Lock, LogOut, PersonStanding, Play, Power,
+  RotateCcw,
+} from "lucide-react";
 import { Boton, IconoCirculo, PantallaAdulto, Pasos } from "../componentes/comunes";
+import { enumerar, NOMBRE_ACTIVIDAD, rolCuidador } from "../formato";
 import { useSesion } from "../sesion";
+import { comenzarSesionHoy, estaAcompanado, leerSesionHoy, marcarAcompanado, terminarSesionHoy } from "../sesionHoy";
+import { ACTIVIDADES } from "./Menu";
 import { hablar } from "../sonidos";
 import { useVision } from "../vision/ProveedorVision";
 
 /** Pantalla 01: permiso de cámara, o de micrófono si se elige con la voz. */
 export function Consentimiento() {
   const navegar = useNavigate();
-  const { encender, puntero, movilidad, conVoz } = useVision();
+  const { encender, puntero, movilidad, conVoz, camaraPostura } = useVision();
   const [pidiendo, setPidiendo] = useState(false);
   const soloVoz = puntero === "voz";
   const uso = soloVoz
-    ? "Usamos el micrófono solo para oír la opción que eliges. La cámara no se enciende."
+    ? "Usamos el micrófono solo para oír la opción que eliges."
+      + (camaraPostura ? " La cámara, solo para revisar cómo estás sentado." : " La cámara no se enciende.")
     : (puntero === "mirada" || movilidad === "cabeza"
-      ? "Usamos la cámara solo para ver hacia dónde miras y cómo te mueves."
-      : "Usamos la cámara solo para ver cómo mueves las manos y los brazos.")
+      ? "Usamos la cámara solo para ver hacia dónde miras, cómo te mueves y cómo estás sentado."
+      : "Usamos la cámara solo para ver cómo mueves las manos y los brazos, y cómo estás sentado.")
       + (conVoz ? " El micrófono, para oír tus respuestas." : "");
-  const tituloPrivacidad = soloVoz ? "Tu micrófono, tu privacidad" : "Tu cámara, tu privacidad";
+  const tituloPrivacidad = soloVoz
+    ? (camaraPostura ? "Tu micrófono y tu cámara, tu privacidad" : "Tu micrófono, tu privacidad")
+    : "Tu cámara, tu privacidad";
+  const aparatos = soloVoz ? (camaraPostura ? "el micrófono y la cámara" : "el micrófono") : "la cámara";
 
   useEffect(() => hablar(`${tituloPrivacidad}. ${uso}`), [tituloPrivacidad, uso]);
 
@@ -35,14 +45,14 @@ export function Consentimiento() {
       lateral={
         <>
           <h1>Hola, empecemos juntos</h1>
-          <p>Primero necesitamos tu permiso para usar {soloVoz ? "el micrófono" : "la cámara"}.</p>
+          <p>Primero necesitamos tu permiso para usar {aparatos}.</p>
           <Pasos actual={0} />
         </>
       }
       acciones={
         <>
           <Boton variante="secundario" onClick={() => navegar("/jugar/sin-permiso")}>Ahora no</Boton>
-          <Boton onClick={aceptar} disabled={pidiendo} data-voz="sí, acepto">{pidiendo ? (soloVoz ? "Activando el micrófono…" : "Activando la cámara…") : "Aceptar y continuar"}</Boton>
+          <Boton onClick={aceptar} disabled={pidiendo} data-voz="sí, acepto">{pidiendo ? `Activando ${aparatos}…` : "Aceptar y continuar"}</Boton>
         </>
       }
     >
@@ -53,17 +63,21 @@ export function Consentimiento() {
         <div className="tarjeta">
           <IconoCirculo icono={Lock} />
           <h3>Nada se graba</h3>
-          <p className="texto-apoyo">{soloVoz ? "Ni audios ni videos." : "Ni fotos ni videos."}</p>
+          <p className="texto-apoyo">{soloVoz ? (camaraPostura ? "Ni audios, ni fotos, ni videos." : "Ni audios ni videos.") : "Ni fotos ni videos."}</p>
         </div>
         <div className="tarjeta">
           <IconoCirculo icono={Eraser} />
           <h3>Se borra al instante</h3>
-          <p className="texto-apoyo">{soloVoz ? "Solo se usa la palabra que dices." : "Cada imagen se analiza y se descarta."}</p>
+          <p className="texto-apoyo">
+            {soloVoz
+              ? (camaraPostura ? "Solo se usa la palabra que dices; cada imagen se descarta." : "Solo se usa la palabra que dices.")
+              : "Cada imagen se analiza y se descarta."}
+          </p>
         </div>
         <div className="tarjeta">
           <IconoCirculo icono={Power} />
           <h3>Tú tienes el control</h3>
-          <p className="texto-apoyo">{soloVoz ? "Se apaga al terminar." : "Apágala cuando quieras."}</p>
+          <p className="texto-apoyo">{soloVoz ? (camaraPostura ? "Se apagan al terminar." : "Se apaga al terminar.") : "Apágala cuando quieras."}</p>
         </div>
       </div>
       <p className="nota">Lo puede autorizar el usuario o su cuidador.</p>
@@ -139,12 +153,45 @@ const CONSEJOS = {
   contraluz: "Evita tener una ventana o una luz detrás de ti.",
 };
 
-/** Pantalla 03: detección de presencia, calibración y bienvenida. */
+/**
+ * Pantalla 03: detección de presencia, calibración y bienvenida. Antes de
+ * pedir la calibración se revisa la sesión de hoy: si el cuidador la dejó
+ * lista, se muestra el resumen y «Comenzar»; si no, un mensaje y «Salir».
+ */
 export function Deteccion() {
   const navegar = useNavigate();
-  const { paciente } = useSesion();
-  const { usaCamara, puntero, camara, estado, stream, calibrar } = useVision();
+  const { paciente, recargar } = useSesion();
+  const {
+    usaCamara, camaraPostura, puntero, camara, estado, stream, calibrar, calibrarAlcance, omitirAlcance,
+  } = useVision();
   const video = useRef(null);
+  const [hoy, setHoy] = useState(null);
+  const [comenzando, setComenzando] = useState(false);
+  const rol = rolCuidador(paciente);
+
+  useEffect(() => {
+    recargar(); // tiempo de permanencia y actividades al día
+    leerSesionHoy(paciente.id).then(setHoy).catch(() => setHoy({ estado: "error" }));
+  }, [paciente.id, recargar]);
+
+  // lista | sin_sesion | hecha | esperar | error
+  let modo = null;
+  if (hoy) {
+    const autonomo = hoy.inicio_autonomo ?? paciente.inicio_autonomo;
+    if (hoy.estado === "error") modo = "error";
+    else if (!autonomo && !estaAcompanado(paciente.id)) modo = "esperar";
+    else if (hoy.estado === "lista" || hoy.estado === "en_curso") modo = "lista";
+    else if (hoy.estado === "terminada") modo = "hecha";
+    else modo = "sin_sesion";
+  }
+  const hayQueJugar = modo === "lista";
+
+  // Con la mano, cuando hay sesión se ajusta el sistema a la postura de hoy:
+  // la persona lleva la mano hacia cada lado. Sin sesión no se le pide ese
+  // esfuerzo: para un solo botón grande alcanza la estimación por hombros.
+  useEffect(() => {
+    if (hayQueJugar && usaCamara && puntero === "mano") calibrarAlcance();
+  }, [hayQueJugar, usaCamara, puntero, calibrarAlcance]);
 
   useEffect(() => {
     if (usaCamara && camara === "apagada") navegar("/jugar", { replace: true });
@@ -164,69 +211,182 @@ export function Deteccion() {
   const mirada = estado?.calibracion_mirada;
   const calibrado = conMouse || (conMirada ? mirada?.estado === "completa" : calibracion?.estado === "completa");
   const luzBuena = conMouse || estado?.luz?.estado === "ok";
-  const listo = persona && calibrado && luzBuena;
+  const listo = Boolean(modo) && persona && calibrado && luzBuena;
   const alerta = estado?.alertas?.find((a) => CONSEJOS[a]);
-  const comoElegir = soloVoz ? "Cuando quieras, di «comenzar»."
-    : conMirada ? "Mira Comenzar sin mover la vista." : "Mantén la mano quieta sobre Comenzar.";
+  const botonPrincipal = hayQueJugar ? "Comenzar" : "Salir";
+  const comoElegir = soloVoz ? `Cuando quieras, di «${botonPrincipal.toLowerCase()}».`
+    : conMirada ? `Mira ${botonPrincipal} sin mover la vista.` : `Mantén la mano quieta sobre ${botonPrincipal}.`;
   const calibrandoMirada = conMirada && persona && luzBuena && mirada?.estado === "en_progreso";
+  const calibrandoAlcance = hayQueJugar && !conMouse && !conMirada && calibracion?.estado === "alcance";
+
+  const nombreDe = (t) => NOMBRE_ACTIVIDAD[t];
+  const realizables = hoy?.realizables || [];
+  const hechas = hoy?.hechas || [];
+  const faltan = realizables.filter((t) => !hechas.includes(t));
+  const yaEmpezo = hoy?.estado === "en_curso" && hechas.length > 0;
+  const quitadas = (hoy?.quitadas || []).map(nombreDe);
+
+  const MENSAJES = {
+    lista: {
+      titulo: yaEmpezo ? "Sigamos con tu sesión de hoy" : `Tu ${rol} dejó lista tu sesión de hoy`,
+      texto: yaEmpezo
+        ? `Ya hiciste ${enumerar(hechas.map(nombreDe))}. Te falta ${enumerar(faltan.map(nombreDe))}.`
+        : `${enumerar(realizables.map(nombreDe))}. Cuando quieras, empezamos.`,
+    },
+    sin_sesion: {
+      titulo: "Aún no hay actividades listas para hoy",
+      texto: `Pídele a tu ${rol} que las prepare.`,
+    },
+    hecha: {
+      titulo: "Ya terminaste tu sesión de hoy",
+      texto: `¡Muy bien! Tus resultados se guardaron para que tu ${rol} los vea.`,
+    },
+    esperar: {
+      titulo: `Espera a tu ${rol} para empezar`,
+      texto: `Cuando tu ${rol} esté a tu lado, empiezan juntos.`,
+    },
+    error: {
+      titulo: "No pudimos revisar tu sesión de hoy",
+      texto: `Pídele ayuda a tu ${rol}.`,
+    },
+  };
+  const mensaje = modo ? MENSAJES[modo] : null;
 
   useEffect(() => {
-    if (listo) hablar(`¡Hola, ${paciente.nombre}! ${soloVoz ? "Ya estamos listos." : "Ya te vemos."} ${comoElegir}`);
-  }, [listo, paciente.nombre, comoElegir, soloVoz]);
+    if (!listo || !mensaje) return;
+    const avisoQuitadas = hayQueJugar && quitadas.length
+      ? ` Hoy no toca ${enumerar(quitadas)}. Si quieres hacerla, pídesela a tu ${rol}.` : "";
+    hablar(`¡Hola, ${paciente.nombre}! ${mensaje.titulo}. ${mensaje.texto}${avisoQuitadas} ${comoElegir}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listo, modo, paciente.nombre, comoElegir]);
+
+  const comenzar = async () => {
+    setComenzando(true);
+    try {
+      await comenzarSesionHoy(paciente.id);
+      navegar("/jugar/menu");
+    } catch {
+      // La sesión cambió mientras tanto (p. ej. el cuidador la dio por terminada).
+      setComenzando(false);
+      leerSesionHoy(paciente.id).then(setHoy).catch(() => setHoy({ estado: "error" }));
+    }
+  };
 
   return (
     <PantallaAdulto
       lateral={
         <>
           <h1>{listo ? `¡Hola, ${paciente.nombre}!` : "Te estamos buscando"}</h1>
-          <p>{listo ? `${soloVoz ? "Ya estamos listos" : "Ya te vemos"}. Cuando quieras, empezamos.` : "Siéntate cómodo frente a la pantalla."}</p>
+          <p>{listo ? (soloVoz ? "Ya estamos listos." : "Ya te vemos.") : "Siéntate cómodo frente a la pantalla."}</p>
           <Pasos actual={1} />
         </>
       }
       acciones={
-        <>
-          <Boton variante="secundario" icono={ArrowLeft} onClick={() => navegar("/jugar")}>Volver</Boton>
-          <Boton icono={Play} disabled={!listo} onClick={() => navegar("/jugar/menu")} data-voz="comienza, comencemos, empezar, empecemos, listo, vamos">Comenzar</Boton>
-        </>
+        hayQueJugar ? (
+          <>
+            <Boton variante="secundario" icono={LogOut} onClick={() => navegar("/jugar/fin")}>Salir</Boton>
+            <Boton icono={Play} disabled={!listo || comenzando} onClick={comenzar} data-voz="comienza, comencemos, empezar, empecemos, listo, vamos">Comenzar</Boton>
+          </>
+        ) : (
+          <Boton icono={LogOut} disabled={!listo} onClick={() => navegar("/jugar/fin")} data-voz="salir, adiós, chao">Salir</Boton>
+        )
       }
     >
       <p className="etiqueta">Paso 2 de 3</p>
-      <h2 className="titulo">{listo ? "Te estamos viendo" : "Buscándote…"}</h2>
-      <div className="vista-camara">
-        {conMouse ? (
-          <p style={{ color: "white" }}>
-            {soloVoz ? "Eliges con la voz: la cámara está apagada." : "Modo de prueba: se usa el mouse en lugar de la cámara."}
+      {listo ? (
+        <>
+          <h2 className="titulo">{mensaje.titulo}</h2>
+          <div className={`resumen-sesion ${hayQueJugar ? "" : "resumen-sesion-vacia"}`}>
+            {hayQueJugar ? (
+              <div className="resumen-sesion-actividades">
+                {ACTIVIDADES.filter((a) => realizables.includes(a.tipo)).map(({ tipo, titulo, icono }) => {
+                  const hecha = hechas.includes(tipo);
+                  return (
+                    <div key={tipo} className={hecha ? "hecha" : ""}>
+                      <IconoCirculo icono={hecha ? Check : icono} tono={hecha ? "verde" : "menta"} tamano={72} />
+                      <span>{titulo}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <IconoCirculo icono={modo === "hecha" ? Check : CalendarClock} tono={modo === "hecha" ? "verde" : "amarillo"} tamano={96} />
+            )}
+            <p className="texto-apoyo">{mensaje.texto}</p>
+          </div>
+          {hayQueJugar && (usaCamara || camaraPostura) && camara === "activa" && (
+            <EstadoPostura postura={estado?.postura_sentado} />
+          )}
+          {hayQueJugar && quitadas.length > 0 && (
+            <p className="nota">Hoy no toca {enumerar(quitadas)}. Si quieres hacerla, pídesela a tu {rol}.</p>
+          )}
+          <p className="texto-apoyo">
+            {comoElegir}
+            {hayQueJugar && !conMouse && calibrado && (
+              <button type="button" className="boton boton-secundario" style={{ marginLeft: 16, minHeight: 48, fontSize: 20, padding: "0 20px" }}
+                      onClick={puntero === "mano" ? calibrarAlcance : calibrar} data-elegible="">
+                <RotateCcw size={20} /> Volver a calibrar
+              </button>
+            )}
           </p>
-        ) : (
-          <>
-            <video ref={video} autoPlay muted playsInline />
-            <span className="guia" />
-            <span className={`chip chip-izq ${persona ? "chip-verde" : ""}`}>
-              {persona ? <><Check size={20} /> Usuario detectado</> : "Buscándote…"}
-            </span>
-            <span className="chip chip-der">
-              <span className={`punto ${luzBuena ? "punto-amarillo" : "punto-rojo"}`} />
-              {luzBuena ? "Luz buena" : "Poca luz"}
-            </span>
-          </>
-        )}
-      </div>
-      {calibrandoMirada && <CalibracionMirada calibracion={mirada} rostro={estado?.rostro} />}
-      {!conMouse && !conMirada && persona && !calibrado && (
-        <div style={{ display: "grid", gap: 10 }}>
-          <p>Ajustando el sistema a tu postura… {Math.round((calibracion?.progreso || 0) * 100)} %</p>
-          <div className="barra"><span style={{ width: `${(calibracion?.progreso || 0) * 100}%` }} /></div>
-        </div>
+        </>
+      ) : (
+        <>
+          <h2 className="titulo">Buscándote…</h2>
+          <div className="vista-camara">
+            {conMouse ? (
+              <p style={{ color: "white" }}>
+                {soloVoz
+                  ? (camaraPostura ? "Eliges con la voz. La cámara solo revisa tu postura." : "Eliges con la voz: la cámara está apagada.")
+                  : "Modo de prueba: se usa el mouse en lugar de la cámara."}
+              </p>
+            ) : (
+              <>
+                <video ref={video} autoPlay muted playsInline />
+                <span className="guia" />
+                <span className={`chip chip-izq ${persona ? "chip-verde" : ""}`}>
+                  {persona ? <><Check size={20} /> Usuario detectado</> : "Buscándote…"}
+                </span>
+                <span className="chip chip-der">
+                  <span className={`punto ${luzBuena ? "punto-amarillo" : "punto-rojo"}`} />
+                  {luzBuena ? "Luz buena" : "Poca luz"}
+                </span>
+              </>
+            )}
+          </div>
+          {!conMouse && !conMirada && persona && !calibrado && !calibrandoAlcance && (
+            <div style={{ display: "grid", gap: 10 }}>
+              <p>Ajustando el sistema a tu postura… {Math.round((calibracion?.progreso || 0) * 100)} %</p>
+              <div className="barra"><span style={{ width: `${(calibracion?.progreso || 0) * 100}%` }} /></div>
+            </div>
+          )}
+          <p className="texto-apoyo">{alerta ? CONSEJOS[alerta] : "Un momento, por favor…"}</p>
+        </>
       )}
-      <p className="texto-apoyo">
-        {listo ? comoElegir : alerta ? CONSEJOS[alerta] : "Un momento, por favor…"}
-        {!conMouse && calibrado && (
-          <button type="button" className="boton boton-secundario" style={{ marginLeft: 16, minHeight: 48, fontSize: 20, padding: "0 20px" }} onClick={calibrar} data-elegible="">
-            <RotateCcw size={20} /> Volver a calibrar
-          </button>
-        )}
-      </p>
+      {calibrandoMirada && <CalibracionMirada calibracion={mirada} rostro={estado?.rostro} />}
+      {calibrandoAlcance && (
+        <CalibracionAlcance calibracion={calibracion} persona={persona} onOmitir={omitirAlcance} />
+      )}
     </PantallaAdulto>
+  );
+}
+
+/** Pantalla 03: la cámara revisa cómo está sentada antes de empezar. */
+function EstadoPostura({ postura }) {
+  if (postura === "buena") {
+    return <p className="chip chip-verde estado-postura"><Check size={22} aria-hidden="true" /> Postura: estás bien sentado</p>;
+  }
+  if (postura === "encorvado" || postura === "inclinado") {
+    return (
+      <p className="chip chip-naranja estado-postura">
+        <PersonStanding size={22} aria-hidden="true" /> {postura === "encorvado" ? "Endereza la espalda" : "Ponte derecho"}
+      </p>
+    );
+  }
+  return (
+    <p className="chip estado-postura">
+      <PersonStanding size={22} aria-hidden="true" /> Revisando tu postura…
+    </p>
   );
 }
 
@@ -273,16 +433,75 @@ function CalibracionMirada({ calibracion, rostro }) {
   );
 }
 
+const DIRECCIONES_ALCANCE = {
+  arriba: { texto: "hacia arriba", Flecha: ArrowUp },
+  derecha: { texto: "hacia la derecha", Flecha: ArrowRight },
+  abajo: { texto: "hacia abajo", Flecha: ArrowDown },
+  izquierda: { texto: "hacia la izquierda", Flecha: ArrowLeft },
+};
+
+/**
+ * Calibración guiada a la postura: la persona lleva la mano hacia cada lado
+ * hasta donde llega sin esfuerzo y la deja quieta. El anillo de la flecha se
+ * llena mientras la mano está quieta. Cubre la pantalla, así no hay botones
+ * debajo de la mano que se puedan elegir sin querer.
+ */
+function CalibracionAlcance({ calibracion, persona, onOmitir }) {
+  const { paso = 0, total = 4, direccion = "arriba", objetivo = [0.5, 0.1], quieto = 0, mano } = calibracion;
+  const { texto, Flecha } = DIRECCIONES_ALCANCE[direccion] || DIRECCIONES_ALCANCE.arriba;
+  const [x, y] = objetivo;
+
+  useEffect(() => {
+    hablar(paso === 0
+      ? `Vamos a ajustar el sistema a tu cuerpo. Levanta una mano y llévala ${texto}, hasta donde llegues sin esfuerzo. Después deja la mano quieta un momento.`
+      : `Muy bien. Ahora lleva la mano ${texto}.`);
+  }, [paso, texto]);
+
+  const ayuda = !persona
+    ? "No te vemos: siéntate frente a la cámara"
+    : !mano
+      ? "Levanta una mano para que la veamos"
+      : quieto > 0
+        ? "¡Así! Deja la mano quieta…"
+        : "Hasta donde llegues, sin forzarte";
+
+  return (
+    <div className="calibracion-mirada calibracion-alcance" role="status" aria-live="polite">
+      <div className="calibracion-alcance-texto">
+        <p>Lleva la mano {texto}</p>
+        <p className="calibracion-alcance-ayuda">{ayuda}</p>
+        <p className="calibracion-alcance-paso">Paso {paso + 1} de {total}</p>
+      </div>
+      <span
+        key={paso}
+        className="calibracion-alcance-objetivo"
+        style={{ left: `${x * 100}%`, top: `${y * 100}%`, "--progreso": quieto }}
+      >
+        <Flecha size={52} strokeWidth={3} />
+      </span>
+      {/* Solo con el mouse: es para el cuidador, no se elige con la mano. */}
+      <button type="button" className="calibracion-alcance-omitir" onClick={onOmitir}>
+        Omitir (ajuste automático)
+      </button>
+    </div>
+  );
+}
+
 /** Fin del recorrido del adulto mayor. */
 export function Despedida() {
   const navegar = useNavigate();
   const { paciente } = useSesion();
-  const { apagar, puntero } = useVision();
+  const { apagar, puntero, camaraPostura } = useVision();
+  const [hizoAlgo, setHizoAlgo] = useState(false);
+  const rol = rolCuidador(paciente);
 
   useEffect(() => {
     apagar();
+    marcarAcompanado(null);
     hablar(`¡Hasta pronto, ${paciente.nombre}! Gracias por ejercitar tu mente hoy.`);
-  }, [apagar, paciente.nombre]);
+    // Si sale a mitad de la sesión, en el panel queda como terminada.
+    terminarSesionHoy(paciente.id).then((r) => setHizoAlgo(r.total > 0)).catch(() => {});
+  }, [apagar, paciente.nombre, paciente.id]);
 
   return (
     <PantallaAdulto
@@ -294,11 +513,12 @@ export function Despedida() {
         </>
       }
     >
-      <p className="etiqueta">Sesión terminada</p>
+      <p className="etiqueta">Hasta pronto</p>
       <h2 className="titulo">Gracias por ejercitar tu mente hoy</h2>
       <p className="texto-apoyo">
-        {puntero === "voz" ? "El micrófono ya está apagado." : "La cámara ya está apagada."} Tus resultados quedaron
-        guardados para tu cuidador.
+        {puntero !== "voz" ? "La cámara ya está apagada."
+          : camaraPostura ? "El micrófono y la cámara ya están apagados." : "El micrófono ya está apagado."}
+        {hizoAlgo ? ` Tus resultados se guardaron para que tu ${rol} los vea.` : ""}
       </p>
     </PantallaAdulto>
   );

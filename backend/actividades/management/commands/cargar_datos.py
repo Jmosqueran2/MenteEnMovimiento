@@ -22,6 +22,9 @@ SESIONES_DEMO = [
     (1, "historia", 6),
     (0, "memoria", 7),
 ]
+# Lo que "observó la IA" en cada sesión de ejemplo: avisos de postura (encorvada,
+# ladeada) y segundos con mala postura. Coordinación pausa la vigilancia.
+OBSERVACIONES_DEMO = [(3, 1, 140), (2, 0, 75), None, (1, 0, 30), (0, 0, 0)]
 # (título, pista, color, año): el año permite "Ordena los recuerdos".
 HISTORIA_DEMO = [
     ("Boda 1975", "¿Quién está a tu lado en esta foto?", "#038666", 1975),
@@ -73,7 +76,9 @@ class Command(BaseCommand):
             cuidador=cuidador,
             nombre="Rosa",
             apellido="Pérez",
-            defaults={"fecha_nacimiento": date(1948, 3, 15), "nivel": Nivel.MEDIO},
+            defaults={"fecha_nacimiento": date(1948, 3, 15), "nivel": Nivel.MEDIO,
+                      # Ya tiene sesiones de ejemplo: puede empezar sola.
+                      "inicio_autonomo": True, "rol_cuidador": "cuidadora"},
         )
         if not nueva:
             self.stdout.write("La demo ya existía; no se duplicó.")
@@ -85,9 +90,14 @@ class Command(BaseCommand):
             contenido.archivo.save(f"{titulo}.png", _imagen_demo(titulo, color), save=True)
 
         ahora = timezone.now()
-        for dias_atras, tipo, aciertos in SESIONES_DEMO:
+        for (dias_atras, tipo, aciertos), postura in zip(SESIONES_DEMO, OBSERVACIONES_DEMO):
             fin = ahora - timedelta(days=dias_atras, minutes=1)
-            sesion = Sesion.objects.create(
+            observaciones = {"puntero": "mano", "imagenes_analizadas": 9000 + 500 * aciertos,
+                             "ms_por_imagen": 38.0, "postura_vigilada": postura is not None}
+            if postura:
+                observaciones.update(avisos_encorvado=postura[0], avisos_inclinado=postura[1],
+                                     segundos_mala_postura=postura[2])
+            sesion = Sesion.objects.create(observaciones=observaciones,
                 paciente=rosa, tipo=tipo, nivel=Nivel.FACIL, estado=EstadoSesion.FINALIZADA,
                 fin=fin, total_preguntas=8, aciertos=aciertos, tiempo_promedio_ms=4200,
                 nivel_siguiente=Nivel.MEDIO if aciertos >= 7 else Nivel.FACIL,

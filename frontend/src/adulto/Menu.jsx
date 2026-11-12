@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CircleDot, Copy, Image, LogOut, PersonStanding } from "lucide-react";
-import { api } from "../api";
-import { Boton, IconoCirculo, PantallaAdulto } from "../componentes/comunes";
-import { hoyIso, NOMBRE_NIVEL } from "../formato";
+import { Check, CircleDot, Copy, Image, Lock, LogOut, PersonStanding } from "lucide-react";
+import { Boton, Cargando, IconoCirculo, PantallaAdulto } from "../componentes/comunes";
+import { rolCuidador } from "../formato";
 import { useSesion } from "../sesion";
+import { leerSesionHoy } from "../sesionHoy";
 import { hablar } from "../sonidos";
 import { useVision } from "../vision/ProveedorVision";
 
@@ -15,8 +15,6 @@ export const ACTIVIDADES = [
   { tipo: "historia", titulo: "Mi Historia", descripcion: "Recuerda con tus fotos familiares", icono: Image },
 ];
 
-const META_DIARIA = 2;
-
 // Coordinación según la movilidad que eligió el cuidador.
 const COORDINACION_POR_MOVILIDAD = {
   brazo_izquierdo: "Estira el brazo para responder",
@@ -25,66 +23,96 @@ const COORDINACION_POR_MOVILIDAD = {
   cabeza: "Gira la cabeza para responder",
 };
 
-/** Pantalla 04: menú de actividades. */
+/**
+ * Pantalla 04: solo las actividades de la sesión que preparó el cuidador. La
+ * persona elige el orden. Sin nivel ni configuración: eso es del cuidador.
+ */
 export default function Menu() {
   const navegar = useNavigate();
   const { paciente, recargar } = useSesion();
-  const [hechasHoy, setHechasHoy] = useState(0);
+  const [hoy, setHoy] = useState(null);
   const { puntero, movilidad, conVoz } = useVision();
   const soloVoz = puntero === "voz";
+  const rol = rolCuidador(paciente);
+
+  useEffect(() => {
+    recargar(); // el nivel o las actividades pudieron cambiar
+    leerSesionHoy(paciente.id).then(setHoy).catch(() => setHoy({ estado: "error" }));
+  }, [recargar, paciente.id]);
+
+  const vigente = hoy?.estado === "lista" || hoy?.estado === "en_curso";
+  const pendientes = vigente ? hoy.realizables.filter((t) => !hoy.hechas.includes(t)) : [];
+  const ninguna = vigente && hoy.hechas.length === 0;
   const indicacion = soloVoz
     ? "Di el nombre de una actividad."
     : (puntero === "mirada"
       ? "Mira una actividad un momento."
       : "Mueve la mano hacia una actividad y déjala quieta un momento.")
       + (conVoz ? " O di su nombre." : "");
+  const titulo = ninguna ? "¿Qué hacemos primero?" : "¿Qué hacemos ahora?";
 
   useEffect(() => {
-    recargar(); // el nivel pudo cambiar al terminar la sesión anterior
-    hablar(`¿Qué hacemos hoy? ${indicacion}`);
+    if (!hoy) return;
+    // Sin sesión vigente (o ya terminada) la pantalla 03 explica qué pasa.
+    if (!vigente) return navegar("/jugar/deteccion", { replace: true });
+    if (pendientes.length === 0) return navegar("/jugar/fin", { replace: true });
+    hablar(`${titulo} ${indicacion}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recargar]);
+  }, [hoy]);
 
-  useEffect(() => {
-    api(`/api/sesiones/?paciente=${paciente.id}&desde=${hoyIso()}`)
-      .then((sesiones) => setHechasHoy(sesiones.filter((s) => s.estado === "finalizada").length))
-      .catch(() => {});
-  }, [paciente.id]);
+  if (!hoy || !vigente || pendientes.length === 0) return <Cargando texto="Un momento…" />;
 
-  // Ajuste de la prueba de usabilidad: lo deshabilitado por el cuidador no aparece.
-  // Coordinación es un ejercicio de movimiento con la cámara: no se ofrece con "La voz".
-  const disponibles = ACTIVIDADES.filter((a) => paciente.actividades_habilitadas.includes(a.tipo)
-    && !(soloVoz && a.tipo === "coordinacion"));
+  const preparadas = ACTIVIDADES.filter((a) => hoy.realizables.includes(a.tipo));
+  const bloqueadas = paciente.mostrar_bloqueadas
+    ? ACTIVIDADES.filter((a) => !hoy.realizables.includes(a.tipo) && !(soloVoz && a.tipo === "coordinacion"))
+    : [];
+  const total = hoy.realizables.length;
 
   return (
     <PantallaAdulto
       lateral={
         <>
-          <h1>¿Qué hacemos hoy?</h1>
+          <h1>{titulo}</h1>
           <p>{indicacion}</p>
-          <span className="insignia">Nivel: {NOMBRE_NIVEL[paciente.nivel]}</span>
-          <p>Actividades de hoy: {Math.min(hechasHoy, META_DIARIA)} de {META_DIARIA} completadas</p>
+          {total > 1 && <p>Hoy: {hoy.hechas.length} de {total} hechas</p>}
         </>
       }
       acciones={<Boton variante="secundario" icono={LogOut} onClick={() => navegar("/jugar/fin")}>Salir</Boton>}
     >
       <div className="rejilla-actividades">
-        {disponibles.map(({ tipo, titulo, descripcion: base, icono }) => {
+        {preparadas.map(({ tipo, titulo: nombre, descripcion: base, icono }) => {
           const descripcion = tipo === "coordinacion" ? COORDINACION_POR_MOVILIDAD[movilidad] || base : base;
+          if (hoy.hechas.includes(tipo)) {
+            // Ya hecha: se ve, pero no se puede elegir (no tiene data-elegible).
+            return (
+              <div key={tipo} className="tarjeta-actividad tarjeta-hecha" aria-disabled="true">
+                <IconoCirculo icono={Check} tono="verde" tamano={72} />
+                <h2>{nombre}</h2>
+                <p><strong>Hecha</strong> · ¡Muy bien!</p>
+              </div>
+            );
+          }
           return (
-          <button
-            key={tipo}
-            type="button"
-            className="tarjeta-actividad elegible-tarjeta"
-            data-elegible=""
-            onClick={() => navegar(`/jugar/actividad/${tipo}`)}
-          >
-            <IconoCirculo icono={icono} tamano={72} />
-            <h2>{titulo}</h2>
-            <p>{descripcion}</p>
-          </button>
+            <button
+              key={tipo}
+              type="button"
+              className="tarjeta-actividad elegible-tarjeta"
+              data-elegible=""
+              onClick={() => navegar(`/jugar/actividad/${tipo}`)}
+            >
+              <IconoCirculo icono={icono} tamano={72} />
+              <h2>{nombre}</h2>
+              <p>{descripcion}</p>
+            </button>
           );
         })}
+        {bloqueadas.map(({ tipo, titulo: nombre }) => (
+          <div key={tipo} className="tarjeta-actividad tarjeta-bloqueada" aria-disabled="true">
+            <Lock size={48} aria-hidden="true" />
+            <h2>{nombre}</h2>
+            <p>Esta actividad está en pausa. Pídele a tu {rol} que la active.</p>
+          </div>
+        ))}
       </div>
     </PantallaAdulto>
   );

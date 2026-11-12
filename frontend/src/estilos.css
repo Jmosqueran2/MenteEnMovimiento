@@ -858,7 +858,120 @@ select {
   border-radius: 50%;
   background: var(--amarillo);
 }
-.salir { margin-top: auto; }
+.cuenta {
+  margin-top: auto;
+  display: grid;
+  gap: 4px;
+}
+.cuenta small {
+  color: var(--texto-lateral);
+  font-size: 16px;
+  padding: 0 16px;
+  overflow-wrap: anywhere;
+}
+
+/* Selector de la persona a cargo */
+.selector-persona { position: relative; }
+.perfil-boton {
+  width: 100%;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.perfil-boton > div { flex: 1; min-width: 0; }
+.perfil-boton:hover,
+.perfil-boton[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--amarillo); }
+.perfil-flecha { flex: none; transition: transform 0.15s; }
+.perfil-boton[aria-expanded="true"] .perfil-flecha { transform: rotate(180deg); }
+.lista-personas {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  background: var(--blanco);
+  border-radius: 18px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.lista-personas button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--noche);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.lista-personas button:hover,
+.lista-personas button:focus-visible { background: var(--hielo); }
+.lista-personas .avatar { width: 40px; height: 40px; }
+.avatar-agregar { background: var(--verde); color: var(--blanco); }
+.avatar-lista { background: var(--hielo); color: var(--noche); }
+.selector-persona .nav-titulo { margin-bottom: 10px; }
+
+/* Mis pacientes */
+.boton-compacto { min-height: 52px; padding: 0 24px; font-size: 19px; }
+.grilla-pacientes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+.tarjeta-paciente {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  border: 3px solid transparent;
+}
+.tarjeta-paciente-activa { border-color: var(--verde); }
+.tarjeta-paciente-datos { display: grid; gap: 4px; }
+.tarjeta-paciente-datos strong { font-size: 22px; }
+.avatar-grande { width: 72px; height: 72px; font-size: 26px; }
+.paciente-activo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--verde-oscuro);
+  min-height: 52px;
+}
+.tarjeta-agregar {
+  justify-content: center;
+  border: 3px dashed var(--verde);
+  background: none;
+  box-shadow: none;
+  font: inherit;
+  color: var(--noche);
+  cursor: pointer;
+  min-height: 220px;
+}
+.tarjeta-agregar:hover { background: var(--blanco); }
+
+.boton-peligro {
+  background: #a12c2c;
+  color: var(--blanco);
+}
+
+.enlace-login {
+  font-size: 17px;
+  text-align: center;
+  color: var(--noche);
+}
+.enlace-login a { color: var(--bosque); font-weight: 700; }
 
 .cuidador .contenido {
   padding: 40px 48px;
@@ -1228,6 +1341,54 @@ select {
   .calibracion-mirada-punto { animation: none; }
 }
 
+/* Calibración guiada a la postura (alcance de la mano) */
+.calibracion-alcance-texto {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(720px, calc(100vw - 32px));
+  display: grid;
+  gap: 10px;
+  text-align: center;
+  color: var(--blanco);
+}
+.calibracion-alcance-texto p { margin: 0; }
+.calibracion-alcance-texto > p:first-child { font-size: 40px; font-weight: 800; }
+.calibracion-alcance-ayuda { font-size: 28px; color: var(--amarillo); }
+.calibracion-alcance-paso { font-size: 24px; color: var(--texto-lateral); }
+.calibracion-alcance-objetivo {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 120px;
+  height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 50%;
+  color: var(--noche);
+  background:
+    radial-gradient(circle, var(--amarillo) 0 46px, transparent 47px),
+    conic-gradient(var(--verde) calc(var(--progreso, 0) * 360deg), rgba(255, 255, 255, 0.18) 0);
+  animation: aparecer-punto 400ms ease-out;
+}
+.calibracion-alcance-omitir {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  padding: 10px 18px;
+  border: 2px solid var(--texto-lateral);
+  border-radius: 999px;
+  background: none;
+  color: var(--texto-lateral);
+  font: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+.calibracion-alcance-omitir:hover { color: var(--blanco); border-color: var(--blanco); }
+@media (prefers-reduced-motion: reduce) {
+  .calibracion-alcance-objetivo { animation: none; }
+}
+
 /* Elegir con la voz: indicador abajo al centro, sin tapar las opciones. */
 .chip-voz {
   position: fixed;
@@ -1391,3 +1552,304 @@ body.solo-voz,
 body.solo-voz * {
   cursor: none !important;
 }
+
+/* ------------------------------------------------------------------ */
+/* Sesión preparada (modelo híbrido)                                    */
+/* ------------------------------------------------------------------ */
+
+/* Pantalla 11: franja de estado de la sesión de hoy. Cada estado tiene
+   ícono, color y texto propios: nunca depende solo del color. */
+.franja-sesion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 18px;
+  padding: 16px 22px;
+  margin-bottom: 20px;
+  border-radius: 18px;
+  border: 2px solid var(--borde);
+  font-size: 18px;
+}
+.franja-sesion p { flex: 1 1 320px; margin: 0; }
+.franja-sesion svg { flex: none; }
+.franja-no-preparada { background: var(--crema); border-color: #f1c27d; }
+.franja-no-preparada svg { color: #8a5a00; }
+.franja-lista { background: var(--menta); border-color: #9fd0bd; }
+.franja-lista svg { color: var(--verde-oscuro); }
+.franja-en-curso { background: var(--verde-oscuro); border-color: var(--verde-oscuro); color: var(--blanco); }
+.franja-en-curso .boton-secundario { border-color: var(--blanco); }
+.franja-terminada { background: var(--blanco); }
+.franja-terminada svg { color: var(--bosque); }
+.franja-ayuda { background: var(--rojo-claro); border-color: var(--rojo); }
+.franja-ayuda svg { color: #a12c2c; }
+
+.punto-latido {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--amarillo);
+  animation: latido 1.6s ease-in-out infinite;
+}
+@keyframes latido {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.6; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .punto-latido { animation: none; }
+}
+
+.configurar-sesion {
+  display: grid;
+  gap: 14px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.configurar-sesion:disabled { opacity: 0.5; }
+.configurar-sesion h3 { font-size: 20px; margin-top: 8px; }
+.casilla-chica { font-size: 16px; }
+.opciones-perfil { display: grid; gap: 10px; }
+.opciones-perfil .casilla { align-items: flex-start; font-size: 17px; }
+.boton-preparar { white-space: normal; text-align: center; line-height: 1.2; padding-block: 12px; }
+.enlace {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--verde-oscuro);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Botón principal: verde oscuro (5,8:1 con texto blanco) en vez de 4,6:1. */
+.boton-principal { background: var(--verde-oscuro); }
+
+/* Pantalla 03: resumen de la sesión preparada */
+.resumen-sesion {
+  display: grid;
+  gap: 20px;
+  justify-items: start;
+  padding: 32px;
+  border-radius: var(--radio-tarjeta);
+  background: var(--blanco);
+  box-shadow: var(--sombra);
+}
+.resumen-sesion-vacia { justify-items: center; text-align: center; }
+.resumen-sesion-actividades { display: flex; flex-wrap: wrap; gap: 32px; }
+.resumen-sesion-actividades > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  font-size: 26px;
+  font-weight: 700;
+}
+.resumen-sesion-actividades .hecha span { color: var(--verde-oscuro); }
+
+/* Pantalla 04: tarjetas que no se pueden elegir (sin data-elegible) */
+.tarjeta-hecha { background: var(--menta); box-shadow: none; cursor: default; }
+.tarjeta-bloqueada {
+  background: var(--blanco);
+  border: 3px dashed var(--borde);
+  box-shadow: none;
+  cursor: default;
+}
+.tarjeta-bloqueada svg { color: var(--gris); }
+.tarjeta-bloqueada h2, .tarjeta-bloqueada p { color: var(--gris); }
+
+/* Aviso de postura (actividades): arriba, sin tapar el ejercicio. Debajo de
+   las capas 09/10 (50) y de los diálogos (60); el cursor queda encima. */
+.aviso-postura {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  z-index: 40;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 18px 30px;
+  border-radius: 24px;
+  background: var(--crema);
+  border: 3px solid var(--amarillo);
+  box-shadow: 0 8px 28px rgba(8, 28, 21, 0.18);
+  color: var(--noche);
+  font-size: 24px;
+  pointer-events: none;
+  animation: aviso-postura-entra 0.35s ease-out;
+}
+.aviso-postura svg { flex: none; color: #8a5a00; }
+.aviso-postura div { display: grid; gap: 4px; }
+.aviso-postura strong { font-size: 30px; }
+.aviso-postura-bien { background: var(--menta); border-color: var(--verde-oscuro); }
+.aviso-postura-bien svg { color: var(--verde-oscuro); }
+@keyframes aviso-postura-entra {
+  from { opacity: 0; transform: translate(-50%, -16px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aviso-postura { animation: none; }
+}
+
+/* Mi Historia (12): pregunta propia con sus opciones */
+.pregunta-propia {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 18px 20px;
+  border: 2px solid var(--borde);
+  border-radius: 18px;
+  min-width: 0;
+}
+.pregunta-propia legend { padding: 0 8px; font-weight: 700; font-size: 18px; }
+.opciones-propias { display: grid; gap: 10px; }
+.opcion-propia {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 2px solid transparent;
+}
+.opcion-propia.es-correcta { background: var(--menta); border-color: var(--verde-oscuro); }
+.opcion-propia input:not([type="radio"]) { min-width: 0; }
+.marcar-correcta { display: flex; align-items: center; gap: 6px; font-size: 15px; white-space: nowrap; cursor: pointer; }
+.es-correcta .marcar-correcta { font-weight: 700; color: var(--verde-oscuro); }
+.quitar-opcion {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--borde);
+  background: var(--blanco);
+  color: var(--gris);
+  cursor: pointer;
+}
+.con-pregunta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--verde-oscuro);
+}
+@media (max-width: 600px) {
+  .opcion-propia { grid-template-columns: 1fr auto; }
+  .marcar-correcta { grid-column: 1 / -1; }
+}
+
+/* Seguimiento (15): lo que observó la IA */
+.observado-ia h2 { display: flex; align-items: center; gap: 10px; }
+.observado-ia h2 svg { color: var(--verde-oscuro); }
+.observado-ia-cifras {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+.observado-ia-cifra {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: var(--hielo);
+  font-size: 15px;
+}
+.observado-ia-cifra svg { color: var(--verde-oscuro); }
+.observado-ia-cifra strong { font-size: 20px; }
+.observado-ia-cifra span { color: var(--gris); }
+.celda-ia { font-size: 15px; color: var(--gris); }
+
+/* Pantalla 03: estado de la postura antes de empezar */
+.estado-postura { align-self: flex-start; display: inline-flex; align-items: center; gap: 10px; font-size: 22px; }
+
+/* Panel del cuidador: el menú lateral queda fijo al bajar y se puede esconder. */
+.cuidador .lateral {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.cuidador .lateral[hidden] { display: none; }
+.cuidador.menu-oculto { grid-template-columns: 1fr; }
+.cuidador.menu-oculto .contenido { padding-top: 88px; }
+
+.lateral-cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.esconder-menu,
+.mostrar-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 14px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+.esconder-menu {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  background: var(--bosque);
+  color: var(--blanco);
+  border: 2px solid transparent;
+}
+.esconder-menu:hover { border-color: var(--amarillo); }
+.mostrar-menu {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  z-index: 30;
+  min-height: 52px;
+  padding: 0 20px;
+  background: var(--noche);
+  color: var(--blanco);
+  border: 2px solid var(--noche);
+  box-shadow: 0 4px 16px rgba(8, 28, 21, 0.2);
+  font-size: 18px;
+}
+.mostrar-menu:hover { border-color: var(--amarillo); }
+
+/* En pantallas angostas el menú va arriba, no al costado: no queda fijo. */
+@media (max-width: 960px) {
+  .cuidador .lateral {
+    position: static;
+    height: auto;
+    overflow: hidden;
+  }
+}
+
+/* El ícono del logo nunca se deforma: si falta espacio, el texto pasa a dos líneas. */
+.marca-icono { flex: none; }
+.lateral-cabecera .marca { flex: 1; min-width: 0; line-height: 1.15; }
+
+/* Mis pacientes: eliminar desde cada tarjeta (abre una confirmación). */
+.eliminar-paciente {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: #a12c2c;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.eliminar-paciente:hover,
+.eliminar-paciente:focus-visible { background: var(--rojo-claro); }

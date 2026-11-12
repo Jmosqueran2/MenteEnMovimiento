@@ -84,3 +84,26 @@ export async function iniciarSesion(usuario, clave) {
   if (!r.ok) throw new ErrorApi(r.status, { detail: "Usuario o clave incorrectos." });
   guardarTokens(await r.json());
 }
+
+/** Si la pantalla de inicio puede ofrecer crear una cuenta. */
+export async function registroAbierto() {
+  try {
+    const r = await fetch("/api/auth/registro/");
+    return r.ok && (await r.json()).abierto === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Crea una cuenta de cuidador y entra con ella. */
+export async function registrarCuenta({ nombre, usuario, email, clave }) {
+  const r = await fetch("/api/auth/registro/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nombre, usuario, email, clave }),
+  });
+  if (r.status === 429) throw new ErrorApi(429, { detail: "Demasiados intentos. Prueba de nuevo en una hora." });
+  const datos = await r.json().catch(() => null);
+  if (!r.ok) throw new ErrorApi(r.status, datos);
+  guardarTokens(datos);
+}

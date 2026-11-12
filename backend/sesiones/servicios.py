@@ -11,7 +11,7 @@ from rest_framework.exceptions import ValidationError
 from historia.models import ContenidoHistoria
 
 from adaptacion.recomendador import recomendar
-from . import juegos
+from . import juegos, preparacion
 from .models import EstadoSesion, Respuesta, Sesion
 
 MAX_INTENTOS = 3
@@ -22,8 +22,10 @@ MAX_INTENTOS = 3
 def iniciar_sesion(paciente, tipo):
     if tipo not in paciente.actividades_habilitadas:
         raise ValidationError({"tipo": "Esta actividad está deshabilitada por tu cuidador."})
+    preparada = preparacion.vincular(paciente, tipo)
     plan = juegos.armar_plan(paciente, tipo)
-    return Sesion.objects.create(paciente=paciente, tipo=tipo, nivel=paciente.nivel, plan=plan)
+    return Sesion.objects.create(paciente=paciente, tipo=tipo, nivel=paciente.nivel, plan=plan,
+                                 preparada=preparada)
 
 
 def _opcion_publica(opcion, contenidos):
@@ -169,7 +171,7 @@ def registrar_respuesta(sesion, indice, tiempo_ms, opcion=None, orden=None, erro
 
 
 @transaction.atomic
-def finalizar_sesion(sesion, cancelada=False):
+def finalizar_sesion(sesion, cancelada=False, observaciones=None):
     sesion = Sesion.objects.select_for_update().select_related("paciente").get(pk=sesion.pk)
     if sesion.estado != EstadoSesion.EN_CURSO:
         raise ValidationError({"detail": "Esta sesión ya terminó."})
@@ -180,6 +182,8 @@ def finalizar_sesion(sesion, cancelada=False):
     sesion.total_preguntas = metricas["respondidas"] if cancelada else metricas["total"]
     sesion.aciertos = metricas["aciertos"]
     sesion.tiempo_promedio_ms = metricas["tiempo_promedio_ms"]
+    if observaciones:
+        sesion.observaciones = dict(observaciones)
 
     paciente = sesion.paciente
     nivel_anterior = paciente.nivel
@@ -193,6 +197,8 @@ def finalizar_sesion(sesion, cancelada=False):
         paciente.nivel = sesion.nivel_siguiente
         paciente.save(update_fields=["nivel", "actualizado"])
     sesion.save()
+    if not cancelada:
+        preparacion.al_finalizar(sesion)
 
     return {
         "estado": sesion.estado,
@@ -215,8 +221,58 @@ def sesiones_finalizadas(paciente, dias):
     return paciente.sesiones.filter(estado=EstadoSesion.FINALIZADA, fin__gte=desde).order_by("fin")
 
 
+def ayudas_durante(sesion, pedidos):
+    """Pedidos de ayuda hechos mientras duró la actividad."""
+    return sum(1 for p in pedidos if sesion.inicio <= p.creado <= (sesion.fin or timezone.now()))
+
+
+def resumen_observado(sesion, pedidos):
+    """Una línea por sesión de lo que observó la IA, para la tabla de seguimiento."""
+    o = sesion.observaciones or {}
+    avisos = o.get("avisos_encorvado", 0) + o.get("avisos_inclinado", 0)
+    return {
+        "puntero": o.get("puntero"),
+        "postura_vigilada": bool(o.get("postura_vigilada")),
+        "avisos_postura": avisos,
+        "avisos_encorvado": o.get("avisos_encorvado", 0),
+        "avisos_inclinado": o.get("avisos_inclinado", 0),
+        "segundos_mala_postura": round(o.get("segundos_mala_postura", 0)),
+        "error_mirada": o.get("error_mirada"),
+        "correcciones_mirada": o.get("correcciones_mirada", 0),
+        "imagenes_analizadas": o.get("imagenes_analizadas", 0),
+        "ms_por_imagen": o.get("ms_por_imagen"),
+        "pedidos_ayuda": ayudas_durante(sesion, pedidos),
+    }
+
+
+def resumen_ia(sesiones, pedidos):
+    """Totales del periodo: lo que la IA observó en todas las sesiones."""
+    filas = [resumen_observado(s, pedidos) for s in sesiones]
+    con_postura = [f for f in filas if f["postura_vigilada"]]
+    errores = [f["error_mirada"] for f in filas if f["error_mirada"] is not None]
+    tiempos = [f["ms_por_imagen"] for f in filas if f["ms_por_imagen"]]
+    punteros = {}
+    for f in filas:
+        if f["puntero"]:
+            punteros[f["puntero"]] = punteros.get(f["puntero"], 0) + 1
+    return {
+        "sesiones_con_datos": sum(1 for s in sesiones if s.observaciones),
+        "sesiones_postura": len(con_postura),
+        "avisos_postura": sum(f["avisos_postura"] for f in con_postura),
+        "sesiones_sin_avisos": sum(1 for f in con_postura if f["avisos_postura"] == 0),
+        "minutos_mala_postura": round(sum(f["segundos_mala_postura"] for f in con_postura) / 60, 1),
+        "pedidos_ayuda": sum(f["pedidos_ayuda"] for f in filas),
+        "error_mirada": round(mean(errores), 3) if errores else None,
+        "correcciones_mirada": sum(f["correcciones_mirada"] for f in filas),
+        "imagenes_analizadas": sum(f["imagenes_analizadas"] for f in filas),
+        "ms_por_imagen": round(mean(tiempos)) if tiempos else None,
+        "punteros": punteros,
+    }
+
+
 def calcular_seguimiento(paciente, dias=7):
     sesiones = list(sesiones_finalizadas(paciente, dias))
+    pedidos = list(paciente.pedidos_ayuda.filter(creado__gte=timezone.now() - timedelta(days=dias)))
     total_preguntas = sum(s.total_preguntas for s in sesiones)
     total_aciertos = sum(s.aciertos for s in sesiones)
     tiempos = [s.tiempo_promedio_ms for s in sesiones if s.tiempo_promedio_ms is not None]
@@ -238,7 +294,9 @@ def calcular_seguimiento(paciente, dias=7):
                 "actividad": s.get_tipo_display(),
                 "aciertos": s.aciertos,
                 "total": s.total_preguntas,
+                "ia": resumen_observado(s, pedidos),
             }
             for s in reversed(sesiones[-5:])
         ],
+        "ia": resumen_ia(sesiones, pedidos),
     }

@@ -37,3 +37,16 @@ export const NOMBRE_ACTIVIDAD = {
 
 export const NOMBRE_NIVEL = { facil: "Fácil", medio: "Medio", dificil: "Difícil" };
 export const ORDEN_NIVEL = ["facil", "medio", "dificil"];
+
+/** "cuidador" o "cuidadora", según el perfil de la persona. */
+export const rolCuidador = (paciente) => (paciente?.rol_cuidador === "cuidadora" ? "cuidadora" : "cuidador");
+
+/** ["Memoria", "Atención", "Mi Historia"] → "Memoria, Atención y Mi Historia" */
+export function enumerar(partes) {
+  if (partes.length <= 1) return partes.join("");
+  return `${partes.slice(0, -1).join(", ")} y ${partes.at(-1)}`;
+}
+
+/** "10:15" */
+export const hora = (fechaIso) =>
+  new Date(fechaIso).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit", hour12: false });

@@ -8,7 +8,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from adaptacion.views import ModeloView
 from historia.views import ContenidoHistoriaViewSet
-from pacientes.views import AdultoMayorViewSet, YoView
+from pacientes.views import AdultoMayorViewSet, RegistroView, YoView
 from sesiones.views import SesionViewSet
 
 router = DefaultRouter()
@@ -27,6 +27,7 @@ urlpatterns = [
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("api/auth/yo/", YoView.as_view(), name="yo"),
+    path("api/auth/registro/", RegistroView.as_view(), name="registro"),
     path("api/adaptacion/modelo/", ModeloView.as_view(), name="modelo-dificultad"),
     path("api/", include(router.urls)),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -44,6 +44,13 @@ class Movilidad(models.TextChoices):
     CABEZA = "cabeza", "Sin usar los brazos (con la cabeza)"
 
 
+class RolCuidador(models.TextChoices):
+    """Cómo se nombra a quien cuida en los mensajes al adulto mayor."""
+
+    CUIDADOR = "cuidador", "Cuidador"
+    CUIDADORA = "cuidadora", "Cuidadora"
+
+
 def actividades_por_defecto():
     return list(TipoActividad.values)
 
@@ -68,6 +75,14 @@ class AdultoMayor(models.Model):
     # Elegir diciendo la opción en voz alta. Apagado por defecto: según el
     # navegador, el audio puede procesarse en servidores externos.
     comandos_voz = models.BooleanField(default=False)
+    # Perfil de inicio: True = "Puede iniciar sola" (el cuidador prepara la
+    # sesión y la persona la empieza cuando quiere); False = "Requiere
+    # acompañamiento" (la inicia el cuidador). Toda persona nueva empieza
+    # acompañada: la primera sesión siempre la inicia el cuidador.
+    inicio_autonomo = models.BooleanField(default=False)
+    rol_cuidador = models.CharField(max_length=10, choices=RolCuidador.choices, default=RolCuidador.CUIDADOR)
+    # Mostrar en el menú las actividades no preparadas, con candado y sin poder elegirlas.
+    mostrar_bloqueadas = models.BooleanField(default=False)
     creado = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)
 

@@ -107,6 +107,16 @@ def test_puntero_con_la_mirada(cliente):
         estado = ws.receive_json()
         assert estado["cursor"] == {"x": 0.5, "y": 0.4, "fuente": "mirada"}
 
+        # Eligió un botón un poco más allá: se corrige parte de la diferencia.
+        # (No se usa el último instante antes de elegir: hay que esperar un poco.)
+        time.sleep(0.15)
+        ws.send_text('{"accion": "objetivo_mirada", "punto": [0.6, 0.45], "tamano": [0.15, 0.1]}')
+        correccion = ws.receive_json()
+        assert correccion["tipo"] == "correccion_mirada" and correccion["aplicada"] is True
+        assert correccion["correccion"] == pytest.approx([0.04, 0.02])
+        ws.send_text('{"accion": "objetivo_mirada", "punto": [2, 0.5]}')
+        assert ws.receive_json()["tipo"] == "error"
+
         # En Coordinación se vuelve a la mano: el ejercicio es estirar los brazos.
         ws.send_text('{"accion": "config", "modo": "coordinacion"}')
         ws.receive_json()
@@ -116,6 +126,40 @@ def test_puntero_con_la_mirada(cliente):
 
         ws.send_text('{"accion": "config", "modelo_mirada": {"wx": [1], "wy": []}}')
         assert ws.receive_json()["tipo"] == "error"
+
+
+def test_vigilar_postura(cliente):
+    with cliente.websocket_connect("/ws/vision") as ws:
+        ws.send_bytes(foto_persona())
+        assert ws.receive_json()["postura_sentado"] is None  # solo durante las actividades
+
+        ws.send_text('{"accion": "config", "vigilar_postura": true}')
+        assert ws.receive_json()["vigilar_postura"] is True
+        estados = []
+        for _ in range(16):
+            ws.send_bytes(foto_persona())
+            estados.append(ws.receive_json()["postura_sentado"])
+        # Primero toma su postura de referencia; con la misma foto, está bien sentada.
+        assert estados[0] == "midiendo"
+        assert estados[-1] == "buena"
+
+        # En Coordinación se pausa: estirar los brazos inclina los hombros a propósito.
+        ws.send_text('{"accion": "config", "modo": "coordinacion"}')
+        ws.receive_json()
+        ws.send_bytes(foto_persona())
+        assert ws.receive_json()["postura_sentado"] == "pausa"
+
+
+def test_con_la_voz_solo_vigila_la_postura(cliente):
+    """Con "La voz" la cámara no mueve ningún cursor: solo revisa la postura."""
+    with cliente.websocket_connect("/ws/vision") as ws:
+        ws.send_text('{"accion": "config", "puntero": "voz", "vigilar_postura": true}')
+        assert ws.receive_json()["puntero"] == "voz"
+        for _ in range(16):
+            ws.send_bytes(foto_persona())
+            estado = ws.receive_json()
+            assert estado["cursor"] is None and estado["mano"] is None
+        assert estado["postura_sentado"] == "buena"
 
 
 def test_coordinacion_con_la_cabeza(cliente):

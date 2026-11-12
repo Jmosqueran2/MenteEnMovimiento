@@ -286,13 +286,29 @@ def _ordenar_recuerdos(contenidos, nivel):
                  correcta, f"El más antiguo es «{elegidos[0].titulo}».", modo="orden")
 
 
+def _pregunta_propia(contenido, n):
+    """Mi Historia: la pregunta que escribió el cuidador, con la foto o el audio.
+    Según el nivel se muestran n opciones: la correcta y algunas incorrectas."""
+    correcta = contenido.opciones[contenido.respuesta_correcta]
+    incorrectas = [o for i, o in enumerate(contenido.opciones) if i != contenido.respuesta_correcta]
+    elegidas = random.sample(incorrectas, min(max(n, 2) - 1, len(incorrectas)))
+    opciones, indice = barajar([{"texto": t, "emoji": ""} for t in [correcta, *elegidas]], 0)
+    return _item("pregunta_propia", contenido.pregunta, opciones, indice,
+                 contenido.pista or "Tómate tu tiempo y recuerda.", contenido_id=contenido.pk)
+
+
 _JUEGOS_HISTORIA = {"momento": _momento, "quien_es": _quien_es, "foto_igual": _foto_igual}
+# Preguntas propias del cuidador por sesión, como máximo: deja lugar a los demás juegos.
+MAX_PREGUNTAS_PROPIAS = 4
 
 
 def _plan_de_historia(paciente):
     nivel = paciente.nivel
     contenidos = list(paciente.contenidos.all())
-    if len(contenidos) < MIN_CONTENIDOS_HISTORIA:
+    propias = [c for c in contenidos if c.tiene_pregunta]
+    # Con preguntas propias alcanza un solo recuerdo; sin ellas, los juegos
+    # automáticos necesitan al menos dos para tener opciones.
+    if len(contenidos) < MIN_CONTENIDOS_HISTORIA and not propias:
         raise ValidationError(
             {"tipo": "Mi Historia necesita al menos 2 fotos o audios. "
                      "Pide a tu cuidador que los agregue."}
@@ -300,6 +316,8 @@ def _plan_de_historia(paciente):
     fotos = [c for c in contenidos if c.tipo == TipoContenido.IMAGEN]
     n = OPCIONES_HISTORIA[nivel]
     juegos = [j for j in JUEGOS_HISTORIA[nivel] if j == "momento" or len(fotos) >= 2]
+    if len(contenidos) < MIN_CONTENIDOS_HISTORIA:
+        juegos = []
 
     # Una fila por juego con el contenido barajado; se intercalan para variar.
     filas = []
@@ -308,12 +326,13 @@ def _plan_de_historia(paciente):
         filas.append([(juego, c) for c in random.sample(candidatos, len(candidatos))])
     intercalados = [par for grupo in zip(*filas) for par in grupo] if filas else []
     sobrantes = [par for fila in filas for par in fila[min(map(len, filas)):]]
-    plan = []
+    plan = [_pregunta_propia(c, n) for c in random.sample(propias, min(MAX_PREGUNTAS_PROPIAS, len(propias)))]
     ordenar = _ordenar_recuerdos(contenidos, nivel)
     if ordenar:
         plan.append(ordenar)
-    # Cada recuerdo sale como mucho dos veces por sesión (además de ordenarlos), para no aburrir.
-    limite = min(PREGUNTAS_POR_SESION, 2 * len(contenidos) + len(plan))
+    # Cada recuerdo sale como mucho dos veces por sesión, contando su pregunta
+    # propia (además de ordenarlos), para no aburrir.
+    limite = min(PREGUNTAS_POR_SESION, 2 * len(contenidos) + (1 if ordenar else 0))
     for juego, contenido in intercalados + sobrantes:
         if len(plan) >= limite:
             break

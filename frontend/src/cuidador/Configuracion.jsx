@@ -6,6 +6,7 @@ import { useSesion } from "../sesion";
 import { useVision } from "../vision/ProveedorVision";
 import { vozDisponible } from "../vision/voz";
 import { Encabezado, useAvisoFlotante } from "./LayoutCuidador";
+import DialogoEliminarPaciente from "./EliminarPaciente";
 
 const VARIABLES = {
   tasa_aciertos: "Aciertos al primer intento",
@@ -64,6 +65,13 @@ const TIEMPOS = [
   [2500, "2,5 s"],
 ];
 
+const SENSIBILIDADES = [
+  [1, "Normal"],
+  [1.3, "Alta"],
+  [1.6, "Muy alta"],
+  [2, "Máxima"],
+];
+
 const MOVILIDADES = [
   ["completa", "Ambos brazos", "Coordinación pide estirar los dos brazos."],
   ["reducida", "Movimiento limitado", "Para silla de ruedas u hombros rígidos: hay que estirarse menos y casi nada por encima de la cabeza."],
@@ -72,11 +80,43 @@ const MOVILIDADES = [
   ["cabeza", "Sin usar los brazos", "En Coordinación se responde girando e inclinando la cabeza: es un ejercicio de cuello."],
 ];
 
-/** Perfil de la persona a cargo y preferencias de este equipo. */
-export default function Configuracion() {
+/** Eliminar el perfil de la persona y todo lo suyo. */
+function EliminarPerfil({ paciente }) {
   const navegar = useNavigate();
-  const { paciente, setPaciente, recargar } = useSesion();
-  const { control, setControl } = useVision();
+  const [confirmando, setConfirmando] = useState(false);
+
+  return (
+    <div className="tarjeta bloque">
+      <h2>Eliminar perfil</h2>
+      <p className="texto-apoyo" style={{ fontSize: 16 }}>
+        Borra a {paciente.nombre} de tu cuenta junto con sus fotos y audios de Mi Historia y todo su progreso.
+        No se puede deshacer.
+      </p>
+      <div>
+        <button type="button" className="boton boton-peligro" onClick={() => setConfirmando(true)}>
+          Eliminar a {paciente.nombre}
+        </button>
+      </div>
+      {confirmando && (
+        <DialogoEliminarPaciente
+          paciente={paciente}
+          onCerrar={() => setConfirmando(false)}
+          onEliminado={() => navegar("/cuidador/pacientes", { replace: true })}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Perfil de la persona a cargo y preferencias de este equipo.
+ * Con `nueva` el formulario empieza vacío y crea otra persona en la cuenta.
+ */
+export default function Configuracion({ nueva = false }) {
+  const navegar = useNavigate();
+  const { paciente: activo, setPaciente } = useSesion();
+  const paciente = nueva ? null : activo;
+  const { control, setControl, sensibilidad, setSensibilidad } = useVision();
   const [datos, setDatos] = useState({
     nombre: paciente?.nombre || "",
     apellido: paciente?.apellido || "",
@@ -85,6 +125,7 @@ export default function Configuracion() {
     puntero: paciente?.puntero || "mano",
     movilidad: paciente?.movilidad || "completa",
     comandos_voz: paciente?.comandos_voz || false,
+    rol_cuidador: paciente?.rol_cuidador || "cuidador",
   });
   const elegir = (campo, valor) => setDatos({ ...datos, [campo]: valor });
   // Cambiar cómo se mueve el cursor apaga la voz extra: el micrófono solo se
@@ -108,9 +149,10 @@ export default function Configuracion() {
         setPaciente(await api(`/api/pacientes/${paciente.id}/`, { metodo: "PATCH", datos: cuerpo }));
         mostrarAviso("Configuración guardada");
       } else {
-        await api("/api/pacientes/", { metodo: "POST", datos: cuerpo });
-        await recargar();
-        navegar("/cuidador");
+        // El paciente nuevo queda como el activo; se muestra la lista completa
+        // para que se vea que se sumó a los demás.
+        setPaciente(await api("/api/pacientes/", { metodo: "POST", datos: cuerpo }));
+        navegar("/cuidador/pacientes");
       }
     } catch (err) {
       setError(err.message);
@@ -119,10 +161,18 @@ export default function Configuracion() {
 
   return (
     <>
-      <Encabezado etiqueta="Configuración" titulo={paciente ? "Configuración" : "Crea el perfil de la persona a tu cargo"} />
+      <Encabezado
+        etiqueta="Configuración"
+        titulo={paciente ? "Configuración" : activo ? "Agregar un paciente nuevo" : "Crea el perfil de tu primer paciente"}
+      />
+      {!paciente && activo && (
+        <p className="texto-apoyo" style={{ fontSize: 17 }}>
+          El paciente nuevo se suma a tu lista; {activo.nombre} y los demás siguen en «Mis pacientes» con sus datos.
+        </p>
+      )}
       <form className="columnas" onSubmit={guardar}>
         <div className="tarjeta bloque">
-          <h2>Perfil</h2>
+          <h2>{paciente ? "Perfil del paciente" : "Datos del paciente nuevo"}</h2>
           <div className="campo">
             <label htmlFor="nombre">Nombre</label>
             <input id="nombre" value={datos.nombre} onChange={cambiar("nombre")} maxLength={80} />
@@ -134,6 +184,19 @@ export default function Configuracion() {
           <div className="campo">
             <label htmlFor="nacimiento">Fecha de nacimiento</label>
             <input id="nacimiento" type="date" value={datos.fecha_nacimiento} onChange={cambiar("fecha_nacimiento")} />
+          </div>
+
+          <h2>Cómo te nombra en los mensajes</h2>
+          <p className="texto-apoyo" style={{ fontSize: 16 }}>
+            Se usa en avisos como «Pídele a tu cuidadora que las prepare».
+          </p>
+          <div className="segmentado" role="group" aria-label="Cómo te nombra en los mensajes">
+            {[["cuidador", "Mi cuidador"], ["cuidadora", "Mi cuidadora"]].map(([valor, texto]) => (
+              <button key={valor} type="button" aria-pressed={datos.rol_cuidador === valor}
+                      onClick={() => elegir("rol_cuidador", valor)}>
+                {texto}
+              </button>
+            ))}
           </div>
 
           <h2>Tiempo para elegir</h2>
@@ -196,7 +259,7 @@ export default function Configuracion() {
 
           {error && <p className="error-texto">{error}</p>}
           <div>
-            <button type="submit" className="boton boton-principal">{paciente ? "Guardar" : "Crear perfil"}</button>
+            <button type="submit" className="boton boton-principal">{paciente ? "Guardar" : "Agregar paciente"}</button>
           </div>
         </div>
 
@@ -208,6 +271,21 @@ export default function Configuracion() {
             <button type="button" aria-pressed={control === "camara"} onClick={() => setControl("camara")}>Cámara</button>
             <button type="button" aria-pressed={control === "mouse"} onClick={() => setControl("mouse")}>Mouse (pruebas)</button>
           </div>
+
+          <strong>Sensibilidad del cursor con la mano</strong>
+          <div className="segmentado" role="group" aria-label="Sensibilidad del cursor con la mano">
+            {SENSIBILIDADES.map(([valor, texto]) => (
+              <button key={valor} type="button" aria-pressed={sensibilidad === valor}
+                      onClick={() => setSensibilidad(valor)}>
+                {texto}
+              </button>
+            ))}
+          </div>
+          <p className="texto-apoyo" style={{ fontSize: 16 }}>
+            Súbela si con esta cámara no se alcanzan los bordes de la pantalla (cámaras que ven poco espacio o de
+            baja resolución): el cursor llega más lejos con menos movimiento de la mano. Si el cursor se mueve
+            demasiado rápido o tiembla, bájala.
+          </p>
 
           <strong>Narración por voz</strong>
           <div className="segmentado" role="group" aria-label="Narración por voz">
@@ -221,6 +299,7 @@ export default function Configuracion() {
         </div>
       </form>
       {paciente && <TarjetaModelo />}
+      {paciente && <EliminarPerfil paciente={paciente} />}
       {aviso}
     </>
   );

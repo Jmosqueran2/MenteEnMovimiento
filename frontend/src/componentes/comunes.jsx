@@ -61,7 +61,8 @@ export function EstadoCamara() {
   let texto = "Cámara en espera";
   let tono = "gris";
   if (puntero === "voz") {
-    texto = "Elige con la voz (cámara apagada)";
+    // Con la voz la cámara, si está encendida, solo revisa la postura.
+    texto = camara === "activa" ? "Elige con la voz · cámara: postura" : "Elige con la voz (cámara apagada)";
     tono = "verde";
   } else if (control === "mouse") {
     texto = "Control con mouse (pruebas)";

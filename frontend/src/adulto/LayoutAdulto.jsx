@@ -1,21 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, CameraOff, LogOut, RotateCw, Sun, WifiOff } from "lucide-react";
+import { AvisoAyudaPedida, BotonAyuda, useAyuda } from "../componentes/ayuda";
 import { Boton, IconoCirculo, PantallaAdulto } from "../componentes/comunes";
 import { useSesion } from "../sesion";
 import { hablar } from "../sonidos";
 import { useVision } from "../vision/ProveedorVision";
 import ComandosVoz from "../vision/ComandosVoz";
 import Puntero from "../vision/Puntero";
+import AvisoPostura from "./AvisoPostura";
+
+// Desde que empieza (pantalla 03) y durante las actividades se vigila cómo
+// está sentada la persona.
+const CON_POSTURA = ["/jugar/deteccion", "/jugar/menu", "/jugar/actividad"];
 
 // En estas pantallas todavía no hay cámara, así que no se muestran errores de visión.
 const SIN_AVISOS = ["/jugar", "/jugar/sin-permiso", "/jugar/fin"];
 const LUZ_BAJA_MS = 2000;
 const SIN_CONEXION_MS = 5000;
+// Sin cámara la persona no puede elegir nada con la mano: si no vuelve en
+// este tiempo, se avisa solo al cuidador.
+const AYUDA_AUTOMATICA_MS = 30000;
 
 export default function LayoutAdulto() {
   const { paciente } = useSesion();
-  const { apagar, conVoz: vozActiva, puntero, usaCamara, camara, encender, estado } = useVision();
+  const {
+    apagar, conVoz: vozActiva, puntero, usaCamara, camaraPostura, camara, encender, estado, setVigilarPostura,
+  } = useVision();
+  // Con la mano o la mirada la cámara mueve el cursor; con la voz, solo revisa la postura.
+  const conCamara = usaCamara || camaraPostura;
   const { pathname } = useLocation();
   const navegar = useNavigate();
   const ruta = pathname.replace(/\/$/, "");
@@ -27,12 +40,20 @@ export default function LayoutAdulto() {
   // Al salir del modo adulto mayor se apaga la cámara.
   useEffect(() => apagar, [apagar]);
 
+  // Postura: se vigila desde la pantalla 03 y durante cada actividad (la
+  // referencia se toma en la 03, recién sentada para empezar). También con la voz.
+  const vigilarPostura = conCamara && camara === "activa" && CON_POSTURA.some((r) => ruta.startsWith(r));
+  useEffect(() => {
+    setVigilarPostura(vigilarPostura);
+  }, [vigilarPostura, setVigilarPostura]);
+  useEffect(() => () => setVigilarPostura(false), [setVigilarPostura]);
+
   // Apenas se deja de usar la voz, vuelve el cursor: si la forma de moverlo
   // necesita la cámara y está apagada, se enciende sola (el permiso ya se dio
   // en la pantalla 01, que junto con la despedida queda fuera de esto).
   useEffect(() => {
-    if (usaCamara && camara === "apagada" && !SIN_AVISOS.includes(ruta)) encender();
-  }, [usaCamara, camara, ruta, encender]);
+    if (conCamara && camara === "apagada" && !SIN_AVISOS.includes(ruta)) encender();
+  }, [conCamara, camara, ruta, encender]);
 
   // Con la mirada no hay cursor hasta calibrar: si falta, se va a calibrar.
   const calibracionMirada = estado?.calibracion_mirada?.estado;
@@ -55,6 +76,7 @@ export default function LayoutAdulto() {
   return (
     <>
       <Outlet />
+      {vigilarPostura && <AvisoPostura />}
       <AvisosVision />
       {!soloVoz && <Puntero permanenciaMs={paciente.tiempo_permanencia_ms} />}
       {conVoz && <ComandosVoz />}
@@ -112,8 +134,15 @@ function AvisosVision() {
     <Boton variante="secundario" icono={ArrowLeft} onClick={() => navegar("/jugar/menu")}>Volver al menú</Boton>
   );
 
-  if (aviso === "luz") {
-    return (
+  if (aviso === "luz") return <PocaLuz salida={salida} onReintentar={() => { ignorarHasta.current = Date.now() + 5000; setAviso(null); }} />;
+
+  return <SinCamara esConexion={aviso === "conexion"} salida={salida} reintentar={reintentar} />;
+}
+
+/** Pantalla 09: poca luz. */
+function PocaLuz({ salida, onReintentar }) {
+  const ayuda = useAyuda("luz");
+  return (
       <div className="capa">
         <PantallaAdulto
           lateral={
@@ -126,8 +155,9 @@ function AvisosVision() {
           acciones={
             <>
               {salida}
-              <Boton icono={RotateCw} onClick={() => { ignorarHasta.current = Date.now() + 5000; setAviso(null); }}>
-                Reintentar
+              <BotonAyuda ayuda={ayuda} />
+              <Boton icono={RotateCw} onClick={onReintentar} data-voz="reintentar, ya hay luz, listo">
+                Ya hay más luz
               </Boton>
             </>
           }
@@ -141,13 +171,31 @@ function AvisosVision() {
             <li data-n="2">Mira hacia una ventana.</li>
             <li data-n="3">Evita tener luz detrás de ti.</li>
           </ol>
-          <p className="texto-apoyo"><span className="spinner" style={{ display: "inline-block", width: 24, height: 24, verticalAlign: "middle", marginRight: 10 }} />Buscándote de nuevo…</p>
+          <AvisoAyudaPedida ayuda={ayuda} />
+          {!ayuda.pedida && (
+            <p className="texto-apoyo"><span className="spinner" style={{ display: "inline-block", width: 24, height: 24, verticalAlign: "middle", marginRight: 10 }} />Buscándote de nuevo…</p>
+          )}
         </PantallaAdulto>
       </div>
-    );
-  }
+  );
+}
 
-  const esConexion = aviso === "conexion";
+/** Pantalla 10: cámara o conexión perdida. A los 30 s se avisa solo al cuidador. */
+function SinCamara({ esConexion, salida, reintentar }) {
+  const ayuda = useAyuda(esConexion ? "conexion" : "camara");
+  const { pedida, pedir } = ayuda;
+
+  useEffect(() => {
+    if (pedida) return undefined;
+    // Si falla el aviso (p. ej. sin internet), se vuelve a intentar.
+    let temporizador;
+    const intentar = async () => {
+      if (!(await pedir())) temporizador = setTimeout(intentar, 15000);
+    };
+    temporizador = setTimeout(intentar, AYUDA_AUTOMATICA_MS);
+    return () => clearTimeout(temporizador);
+  }, [pedida, pedir]);
+
   return (
     <div className="capa">
       <PantallaAdulto
@@ -161,6 +209,7 @@ function AvisosVision() {
         acciones={
           <>
             {salida}
+            <BotonAyuda ayuda={ayuda} />
             <Boton icono={RotateCw} onClick={reintentar}>Reintentar</Boton>
           </>
         }
@@ -182,8 +231,9 @@ function AvisosVision() {
             <li data-n="1">Revisa que el cable de la cámara esté bien conectado.</li>
           )}
           <li data-n="2">Acércate a la pantalla y espera.</li>
-          <li data-n="3">Si sigue igual, pide ayuda a tu cuidador.</li>
+          <li data-n="3">{pedida ? `Ya le avisamos a tu ${ayuda.rol}.` : `Si sigue igual, en un momento le avisamos a tu ${ayuda.rol}.`}</li>
         </ol>
+        <AvisoAyudaPedida ayuda={ayuda} />
       </PantallaAdulto>
     </div>
   );

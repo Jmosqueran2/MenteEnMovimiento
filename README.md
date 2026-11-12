@@ -42,16 +42,36 @@ Todas las rutas (salvo el token) requieren `Authorization: Bearer <access>`.
 | POST | `/api/auth/token/` | Inicio de sesión del cuidador `{username, password}` |
 | POST | `/api/auth/token/refresh/` | Renovar token |
 | GET | `/api/auth/yo/` | Cuidador y personas a su cargo |
-| GET/POST/PATCH | `/api/pacientes/` | Perfil, nivel, tiempo de permanencia, actividades habilitadas (11) |
+| GET/POST | `/api/auth/registro/` | Sin token. GET → `{abierto}`; POST `{nombre, usuario, email?, clave}` crea la cuenta y devuelve los tokens (máx. 10 por hora e IP) |
+| GET/POST/PATCH/DELETE | `/api/pacientes/` | Perfil, nivel, tiempo de permanencia, actividades habilitadas (11). DELETE borra también sus archivos de Mi Historia |
 | GET | `/api/pacientes/{id}/resumen/` | Tarjetas del panel del cuidador (11) |
+| POST | `/api/pacientes/{id}/preparar/` | «Preparar sesión»: guarda `{nivel, actividades_habilitadas, tiempo_permanencia_ms, inicio_autonomo, mostrar_bloqueadas}` y deja lista la sesión de hoy (11) |
+| GET | `/api/pacientes/{id}/sesion-hoy/` | Estado de la sesión de hoy: `no_preparada` · `lista` · `en_curso` · `terminada`, actividades hechas, aciertos y pedido de ayuda pendiente (11, 03, 04, 08) |
+| POST | `/api/pacientes/{id}/sesion-hoy/comenzar/` | El adulto mayor pulsa «Comenzar» (03) |
+| POST | `/api/pacientes/{id}/sesion-hoy/terminar/` | Sale a mitad (despedida) o el cuidador la da por terminada (11) |
+| POST | `/api/pacientes/{id}/ayuda/` | «Pedir ayuda a mi cuidador» `{motivo: luz · camara · conexion · actividad · otro}` (05, 09, 10) |
+| POST | `/api/pacientes/{id}/ayuda/atendida/` | El cuidador pulsa «Entendido» (11) |
 | GET | `/api/pacientes/{id}/seguimiento/?dias=7` | Indicadores y gráfica (15) |
 | GET | `/api/pacientes/{id}/seguimiento-csv/` | Exportar CSV (15) |
+| GET | `/api/pacientes/{id}/seguimiento-pdf/?dias=7` | Exportar informe PDF: resumen, gráfica y tabla de sesiones (15) |
 | GET/POST/PATCH/DELETE | `/api/historia/?paciente={id}` | Fotos y audios de Mi Historia, multipart (12, 13, 14) |
 | POST | `/api/sesiones/` | Iniciar actividad `{paciente, tipo}` → 8 preguntas (05) |
 | POST | `/api/sesiones/{id}/responder/` | `{indice_pregunta, opcion, tiempo_ms}` → acierto o pista (06, 07) |
 | POST | `/api/sesiones/{id}/finalizar/` | `{cancelada?}` → resumen y nivel siguiente (08) |
 
 `tipo` ∈ `memoria`, `atencion`, `coordinacion`, `historia`.
+
+### Cuentas y personas a cargo
+- Cada cuidador tiene su cuenta y solo ve a las personas que agregó desde esa cuenta.
+  La cuenta se crea en `/registro` (enlace en la pantalla de inicio) o desde `/admin`.
+  Con `DJANGO_REGISTRO_ABIERTO=False` (o `REGISTRO_ABIERTO=false` en `deploy/aws.env`)
+  solo se crean desde `/admin`.
+- Un cuidador puede tener muchos pacientes. **Mis pacientes** (menú lateral) los
+  muestra todos; desde ahí, o desde la tarjeta «Paciente activo», se elige con
+  quién trabajar o se agrega un paciente nuevo. Mi Historia, el progreso,
+  el nivel y la configuración son de cada persona y no se mezclan.
+- El navegador recuerda la última persona elegida. La calibración de la mirada se
+  descarta al cambiar de persona; la sensibilidad del cursor es del equipo.
 
 ### Reglas importantes
 - La respuesta correcta nunca se envía al iniciar; se revela al responder.
@@ -60,7 +80,23 @@ Todas las rutas (salvo el token) requieren `Authorization: Bearer <access>`.
   si el modelo no está entrenado se usan reglas fijas (≥80 % y ≤6 s sube; <50 % baja).
 - Mi Historia acepta solo JPG, PNG o MP3 de hasta 10 MB y revisa el contenido
   real del archivo (un PDF renombrado a .jpg se rechaza).
-- Una actividad deshabilitada por el cuidador no se puede iniciar.
+- Una actividad deshabilitada por el cuidador no se puede iniciar. Con una sesión
+  preparada vigente, solo se pueden iniciar sus actividades.
+
+### Sesión preparada (modelo híbrido)
+Diseño completo en [docs/diseno-interfaces-y-sesion-hibrida.md](docs/diseno-interfaces-y-sesion-hibrida.md).
+- El cuidador configura en el panel (11) y pulsa **«Preparar sesión de Rosa»**: se
+  guarda todo y queda la sesión de hoy (vale hasta las 23:59). No hace falta que
+  se quede; el panel muestra el estado y avisa al terminar o si pide ayuda.
+- El adulto mayor se sienta frente a la cámara: la pantalla 03 lo saluda y, si hay
+  sesión, muestra el resumen y **«Comenzar»**. El menú (04) muestra solo lo
+  preparado, sin nivel. Sin sesión: «Aún no hay actividades listas» y «Salir».
+- **Perfil de inicio:** «Puede iniciar sola» o «Requiere acompañamiento». Toda
+  persona nueva empieza acompañada: el cuidador usa **«Iniciar ahora con Rosa»**.
+  Tras una sesión con ≥ 75 % de aciertos y sin pedir ayuda, el panel sugiere
+  pasar a «Puede iniciar sola» (nunca cambia solo).
+- En la pantalla 10 (sin cámara) la persona no puede elegir con la mano, así que
+  el pedido de ayuda se envía solo a los 30 s.
 
 ## Microservicio de visión: puesta en marcha local
 
@@ -130,9 +166,28 @@ funciona desde un solo origen, igual que en producción.
 
 ### Recorridos
 - **Cuidador:** `/login` → panel (11) → Mi Historia (12–14) → Seguimiento (15) → Configuración.
-- **Adulto mayor:** "Ver como Rosa" → consentimiento (01/02) → detección y calibración (03)
-  → menú (04) → actividad (05–07) → resumen (08). Las pantallas 09 (poca luz) y 10
+- **Adulto mayor:** sesión preparada (o «Iniciar ahora con Rosa») → consentimiento (01/02)
+  → detección, aviso de sesión y calibración (03) → menú con lo preparado (04)
+  → actividad (05–07) → resumen (08). Las pantallas 09 (poca luz) y 10
   (cámara o conexión perdida) aparecen como capa sobre cualquier pantalla.
+
+### Calibración guiada a la postura
+Con *La mano*, al empezar las actividades (pantalla 03) el sistema se ajusta al
+cuerpo de la persona ese día: primero ubica los hombros y luego le pide llevar
+la mano **arriba, a la derecha, abajo y a la izquierda**, hasta donde llegue sin
+esfuerzo, y dejarla quieta ~1 s en cada lado (un anillo se llena). La zona activa
+sale de ese alcance real, así sirve igual en silla de ruedas, con un solo brazo
+o con hombros rígidos.
+
+- En selección se usa el 80 % central del alcance (los bordes se alcanzan sin
+  estirarse del todo); en Coordinación, el alcance entero.
+- La mano en reposo no completa un paso: primero hay que moverla hacia ese lado.
+  Si en 12 s no se logra, se toma lo más lejos que llegó.
+- El cuidador puede omitirla con el mouse («Omitir»): se usa la estimación por hombros.
+- «Volver a calibrar» la repite. Al reconectar, el navegador reenvía el alcance.
+- Mensajes: `{"accion":"config","alcance_guiado":true}`, `{"accion":"omitir_alcance"}`,
+  `{"accion":"config","alcance":{"arriba","derecha","abajo","izquierda"}}`. Mientras
+  dura, `calibracion` trae `estado:"alcance"`, `paso`, `direccion`, `objetivo` y `quieto` (0–1).
 
 ### Selección por permanencia
 Todo elemento con `data-elegible` se pulsa al dejar el cursor encima el tiempo
@@ -160,6 +215,19 @@ cursor con → La mirada** el cursor sigue hacia dónde mira la persona.
   de buscar la cara.
 - El parpadeo se detecta respecto de la apertura habitual de cada persona, así
   quien tiene los párpados caídos no queda como "ojos cerrados" todo el tiempo.
+- Todo se mide en los ejes de la cara: si la persona ladea la cabeza, mirar a un
+  lado no se confunde con mirar hacia arriba.
+- En cada punto se descartan las muestras sueltas (mediana y MAD) y luego se
+  elige el modelo por validación cruzada dejando un punto afuera: por eje
+  (original), cruzado (la cámara encima de la pantalla acopla los ejes) o con
+  términos cuadráticos del iris, y la regularización. Solo se usa uno más
+  complejo si predice mejor los lugares que no se usaron al calibrar. El
+  `error` que se informa es ese error de validación, no el de entrenamiento.
+- **Corrección de la deriva:** cada botón elegido con la mirada confirma dónde
+  estaba mirando la persona. El navegador manda
+  `{"accion":"objetivo_mirada","punto":[x,y],"tamano":[ancho,alto]}` y el servicio
+  corrige de a poco el sesgo (40 % por elección, tope de 15 % de pantalla;
+  ignora objetivos lejanos o muy grandes). Se reinicia al recalibrar.
 - Al parpadear el cursor se queda quieto, así no se pierde la permanencia.
 - En **Coordinación** se sigue usando la mano: el ejercicio es estirar los brazos.
 - Con la mirada se recomienda un tiempo de permanencia de 2 o 2,5 s.
@@ -167,6 +235,36 @@ cursor con → La mirada** el cursor sigue hacia dónde mira la persona.
 Mensajes extra en modo mirada: `"rostro": {"detectado", "ojos_abiertos"}` y
 `"calibracion_mirada": {"estado", "progreso", "indice", "punto", "modelo"}`;
 `{"accion":"config","modelo_mirada":{...}}` restaura una calibración.
+
+### Postura al estar sentado
+Desde que empiezan las actividades (pantalla 03) y durante cada una, la cámara
+vigila cómo está sentada la persona. En la 03 se ve «Revisando tu postura…» →
+«Postura: estás bien sentado» o «Endereza la espalda». Si se encorva o se ladea
+unos segundos, aparece arriba un aviso («Endereza la espalda» / «Ponte derecho»)
+que no tapa el ejercicio ni se puede elegir, y se va solo al enderezarse
+(«¡Así está muy bien!»).
+
+- Con la cámara de frente no se ve la espalda, pero encorvarse baja la cabeza:
+  se mide la altura de la nariz sobre la línea de hombros, dividida por el
+  ancho de hombros, y el ángulo de los hombros.
+- **Referencia propia:** las primeras ~12 mediciones en la pantalla 03. Cada
+  cámara está a otra altura, así que se compara con su postura, no con un valor fijo.
+  Pero nunca se toma como referencia una postura curva (altura mínima 0,45) ni
+  ladeada (como mucho 5°): si empieza encorvada, también se le avisa.
+- Avisa si la cabeza baja de 75 % de su altura de referencia o los hombros se
+  inclinan más de 12° durante **3 s seguidos** (mirar abajo un momento no
+  cuenta). El aviso se quita al volver a 85 % / 7° durante 1 s.
+- Con una mano levantada (apuntando con el cursor) solo se revisa si está
+  encorvada. En Coordinación se pausa. La voz lo dice como máximo cada 45 s
+  y nunca interrumpe la lectura de una pregunta.
+- Mensajes: `{"accion":"config","vigilar_postura":true}`; cada estado trae
+  `postura_sentado`: `midiendo` · `buena` · `encorvado` · `inclinado` · `pausa`.
+- Con «La voz» la cámara también se enciende, **solo para la postura**: no hay
+  cursor ni se busca la mano (`"puntero": "voz"`), y si la cámara falla no salen
+  las pantallas 09/10, porque se puede seguir jugando con la voz. La pantalla 01
+  pide micrófono y cámara y lo dice («La cámara, solo para revisar cómo estás
+  sentado»). Si no se da permiso de cámara, se juega igual, sin vigilar la postura.
+  Con «Mouse (pruebas)» la cámara no se enciende.
 
 ### Perfil de movilidad y voz
 Se guardan en el perfil de la persona (`puntero`, `movilidad`, `comandos_voz`),
@@ -238,6 +336,11 @@ qué tan difícil es cada uno. El primer ítem siempre es de elegir una opción.
 - **Ordena los recuerdos** usa el año que el cuidador puede escribir al subir
   cada foto o audio (opcional); aparece cuando al menos 2 recuerdos tienen
   años distintos. Cada recuerdo sale como mucho dos veces por sesión.
+- **Pregunta propia:** al subir una foto o audio (pantalla 12), el cuidador puede
+  escribir una pregunta con 2 a 4 opciones y marcar la correcta (`pregunta`,
+  `opciones`, `respuesta_correcta`). En la actividad sale con la foto o el audio;
+  según el nivel se muestran 2 (Fácil), 3 (Medio) o todas (Difícil), siempre con
+  la correcta. Hasta 4 por sesión. Con preguntas propias alcanza un solo recuerdo.
 - Parejas, Sigue la figura, Alcanza y recuerda y los juegos de Mi Historia se
   arman al vuelo con contenido que ya existe; Opuestos, Clasifica, ¿Cuál NO
   pertenece? y Secuencia están en el banco (`actividades/banco.py`), que con

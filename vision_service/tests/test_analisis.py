@@ -47,6 +47,24 @@ def test_zona_activa_recorta_a_la_pantalla():
     assert zona.mapear(0.0, 1.0) == (0.0, 1.0)
 
 
+def test_sensibilidad_achica_la_zona_alrededor_del_centro():
+    zona = analisis.ZonaActiva(0.2, 0.8, 0.2, 0.8)
+    assert zona.escalada(1) is zona
+    doble = zona.escalada(2)
+    assert doble.mapear(0.5, 0.5) == pytest.approx((0.5, 0.5))
+    # Con el doble de sensibilidad, un cuarto del ancho ya llega al borde.
+    assert doble.mapear(0.35, 0.65) == pytest.approx((0.0, 1.0))
+    assert zona.mapear(0.35, 0.65) == pytest.approx((0.25, 0.75))
+
+
+def test_sensibilidad_se_limita():
+    assert analisis.limitar_sensibilidad(10) == analisis.SENSIBILIDAD_MAXIMA
+    assert analisis.limitar_sensibilidad(0.2) == analisis.SENSIBILIDAD_MINIMA
+    assert analisis.limitar_sensibilidad("x") == analisis.SENSIBILIDAD_MINIMA
+    assert analisis.limitar_sensibilidad(float("nan")) == analisis.SENSIBILIDAD_MINIMA
+    assert analisis.limitar_sensibilidad("1.5") == 1.5
+
+
 def test_coordinacion_exige_estirar_mas():
     hombros = ((0.4, 0.5), (0.6, 0.5))
     seleccion = analisis.zona_desde_hombros(*hombros, "seleccion")
@@ -79,6 +97,103 @@ def test_postura():
     assert postura["brazos"]["izquierdo"]["extendido"] is True
     assert postura["brazos"]["derecho"]["extendido"] is False
     assert analisis.alertas({"estado": "ok"}, postura) == []
+
+
+def sentada(baja_cabeza=0.0, inclina_grados=0.0, mano_arriba=False):
+    """Persona sentada de frente: hombros de 240 px y la nariz 120 px por encima."""
+    puntos = [[0, 0, 0.0] for _ in range(17)]
+    mitad = 120 * math.cos(math.radians(inclina_grados))
+    alto = 120 * math.sin(math.radians(inclina_grados))
+    puntos[5] = [320 - mitad, 300 - alto, 0.9]
+    puntos[6] = [320 + mitad, 300 + alto, 0.9]
+    puntos[0] = [320, 180 + baja_cabeza, 0.9]
+    puntos[1] = [310, 170 + baja_cabeza, 0.9]
+    for codo, muneca, x in ((7, 9, 200), (8, 10, 440)):
+        puntos[codo] = [x, 400, 0.9]
+        puntos[muneca] = [x, 470, 0.9]  # brazos abajo
+    if mano_arriba:
+        puntos[10] = [460, 320, 0.9]  # apuntando con la mano derecha
+    return analisis.analizar_postura(puntos, 640, 480)["medidas"]
+
+
+def test_medidas_postura():
+    m = sentada()
+    assert m["altura_cabeza"] == pytest.approx(0.5)
+    assert m["inclinacion_hombros"] == pytest.approx(0.0)
+    assert m["brazo_activo"] is False
+    assert sentada(inclina_grados=15)["inclinacion_hombros"] == pytest.approx(15)
+    assert sentada(mano_arriba=True)["brazo_activo"] is True
+
+
+def monitor_con_referencia():
+    monitor = analisis.MonitorPostura()
+    t = 0.0
+    for _ in range(analisis.MonitorPostura.MUESTRAS_REFERENCIA):
+        assert monitor.actualizar(sentada(), t) in ("midiendo", "buena")
+        t += 0.1
+    assert monitor.estado == "buena"
+    return monitor, t
+
+
+def test_monitor_postura_avisa_si_se_encorva_un_rato():
+    monitor, t = monitor_con_referencia()
+    # Bajar la cabeza un momento (mirar abajo de la pantalla) no avisa.
+    for _ in range(20):
+        t += 0.1
+        assert monitor.actualizar(sentada(baja_cabeza=50), t) == "buena"
+    monitor.actualizar(sentada(), t + 0.1)
+    # Encorvada más de 4 s seguidos: avisa.
+    t += 0.2
+    for _ in range(45):
+        t += 0.1
+        estado = monitor.actualizar(sentada(baja_cabeza=50), t)
+    assert estado == "encorvado"
+    # Se endereza un poco pero no lo suficiente: el aviso sigue.
+    t += 2
+    assert monitor.actualizar(sentada(baja_cabeza=25), t) == "encorvado"
+    # Se endereza de verdad: el aviso se va al cabo de 1 s.
+    for _ in range(12):
+        t += 0.1
+        estado = monitor.actualizar(sentada(), t)
+    assert estado == "buena"
+
+
+def test_monitor_postura_avisa_si_empieza_encorvada():
+    """Si se sienta curvada desde el principio, esa no queda como su postura normal."""
+    monitor = analisis.MonitorPostura()
+    t = 0.0
+    for _ in range(analisis.MonitorPostura.MUESTRAS_REFERENCIA + 35):
+        t += 0.1
+        estado = monitor.actualizar(sentada(baja_cabeza=50), t)  # altura 0,29
+    assert estado == "encorvado"
+    # Al enderezarse, el aviso se va.
+    for _ in range(12):
+        t += 0.1
+        estado = monitor.actualizar(sentada(), t)
+    assert estado == "buena"
+
+
+def test_monitor_postura_hombros_inclinados():
+    monitor, t = monitor_con_referencia()
+    for _ in range(45):
+        t += 0.1
+        estado = monitor.actualizar(sentada(inclina_grados=18), t)
+    assert estado == "inclinado"
+
+
+def test_monitor_postura_ignora_hombros_al_apuntar_con_la_mano():
+    monitor, t = monitor_con_referencia()
+    for _ in range(60):
+        t += 0.1
+        estado = monitor.actualizar(sentada(inclina_grados=18, mano_arriba=True), t)
+    assert estado == "buena"
+
+
+def test_monitor_postura_sin_hombros_no_cambia():
+    monitor, t = monitor_con_referencia()
+    assert monitor.actualizar(None, t + 10) == "buena"
+    monitor.pausar()
+    assert monitor.estado == "buena"
 
 
 def test_alertas():
@@ -187,9 +302,79 @@ def test_ajuste_mirada_solo_con_los_ojos():
     assert all(math.isfinite(w) for w in modelo.wx + modelo.wy)
 
 
+def girar_rostro(puntos, angulo):
+    c, s = math.cos(angulo), math.sin(angulo)
+    return [(c * x - s * y, s * x + c * y) for x, y in puntos]
+
+
+def test_rasgos_mirada_no_dependen_de_ladear_la_cabeza():
+    """Con la cabeza ladeada, mirar a un lado no debe leerse como mirar arriba."""
+    base = analisis.rasgos_mirada(rostro(cabeza=(0.2, 0.1), iris=(0.15, -0.05)))
+    ladeada = analisis.rasgos_mirada(girar_rostro(rostro(cabeza=(0.2, 0.1), iris=(0.15, -0.05)), 0.25))
+    for clave in ("cabeza_x", "cabeza_y", "iris_x", "iris_y"):
+        assert ladeada[clave] == pytest.approx(base[clave], abs=1e-9)
+    assert ladeada["inclinacion"] == pytest.approx(0.25)
+
+
+def test_ajuste_mirada_elige_modelo_cruzado_si_hace_falta():
+    """Cámara encima de la pantalla: mirar a un lado también mueve el iris en
+    vertical. El modelo por eje no puede separarlo; el cruzado sí."""
+    azar = random.Random(7)
+    muestras = []
+    for px, py in analisis.PUNTOS_CALIBRACION_MIRADA:
+        for _ in range(10):
+            iris = ((px - 0.5) * 0.3 + azar.gauss(0, 0.002),
+                    (py - 0.5) * 0.1 + (px - 0.5) * 0.12 + azar.gauss(0, 0.002))
+            muestras.append((analisis.rasgos_mirada(rostro((0.0, 0.0), iris)), (px, py)))
+    modelo, error = analisis.ajustar_mirada(muestras)
+    assert "iris_x" in modelo.vy  # usa el iris horizontal para estimar la altura
+    assert error < 0.03
+    x, y = modelo.mapear(analisis.rasgos_mirada(rostro((0.0, 0.0), (0.3 * 0.3, -0.2 * 0.1 + 0.3 * 0.12))))
+    assert (x, y) == pytest.approx((0.8, 0.3), abs=0.03)
+
+
+def test_ajuste_mirada_simple_si_alcanza():
+    """Si el modelo por eje ya explica todo, no se elige uno más complejo."""
+    muestras = [(analisis.rasgos_mirada(rostro(((px - 0.5) * 0.2, (py - 0.5) * 0.15),
+                                               ((px - 0.5) * 0.3, (py - 0.5) * 0.2))), (px, py))
+                for px, py in analisis.PUNTOS_CALIBRACION_MIRADA for _ in range(4)]
+    modelo, _ = analisis.ajustar_mirada(muestras)
+    assert modelo.vx == analisis.VARIABLES_POR_EJE["x"]
+
+
+def test_corrector_deriva():
+    corrector = analisis.CorrectorDeriva()
+    # El cursor queda siempre 0,08 a la izquierda y 0,05 arriba de donde mira.
+    azar = random.Random(1)
+    for _ in range(8):
+        u, v = azar.uniform(0.2, 0.8), azar.uniform(0.2, 0.8)
+        predicciones = [corrector.corregir(u - 0.08, v - 0.05) for _ in range(10)]
+        assert corrector.observar(predicciones, (u, v), (0.15, 0.08))
+    assert corrector.corregir(0.42, 0.45) == pytest.approx((0.5, 0.5), abs=0.005)
+
+    # Lejos del botón (miraba otra cosa) o un objetivo enorme: no se usa.
+    antes = (corrector.dx, corrector.dy)
+    assert not corrector.observar([(0.1, 0.1)], (0.8, 0.8), (0.1, 0.1))
+    assert not corrector.observar([(0.5, 0.5)], (0.55, 0.5), (0.6, 0.4))
+    assert (corrector.dx, corrector.dy) == antes
+
+    # Tiene un tope: nunca corre el cursor más de MAXIMO.
+    otro = analisis.CorrectorDeriva()
+    for _ in range(20):
+        otro.observar([otro.corregir(0.3, 0.5)], (0.5, 0.5), (0.1, 0.1))
+    assert otro.dx == pytest.approx(analisis.CorrectorDeriva.MAXIMO)
+
+
 def test_modelo_mirada_desde_dict():
     modelo = analisis.ModeloMirada([0.5, 1.0, 2.0, 0.3], [0.5, 1.0, 2.0, 0.3])
     assert analisis.ModeloMirada.desde_dict(modelo.como_dict()) == modelo
+    cruzado = analisis.ModeloMirada([0.5] + [0.1] * 6, [0.4] + [0.2] * 6,
+                                    analisis.VARIABLES_CRUZADAS, analisis.VARIABLES_CRUZADAS)
+    assert analisis.ModeloMirada.desde_dict(cruzado.como_dict()) == cruzado
+    with pytest.raises(ValueError):  # variable desconocida
+        analisis.ModeloMirada.desde_dict({"wx": [0.5, 1], "wy": [0.5, 1], "vx": ["os.system"], "vy": ["iris_y"]})
+    with pytest.raises(ValueError):  # falta un peso
+        analisis.ModeloMirada.desde_dict({"wx": [0.5], "wy": [0.5, 1], "vx": ["iris_x"], "vy": ["iris_y"]})
     # Los de la versión anterior (3 pesos) se completan con 0.
     antiguo = analisis.ModeloMirada.desde_dict({"wx": [0.5, 1, 2], "wy": [0.5, 1, 2]})
     assert antiguo.wx == [0.5, 1.0, 2.0, 0.0]
